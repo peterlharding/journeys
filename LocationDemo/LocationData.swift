@@ -13,5 +13,3 @@ struct LocationData: Codable {
     let timestamp: String
     let journeyId: String  // A GUID
 }
-
-

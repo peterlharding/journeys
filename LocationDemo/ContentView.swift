@@ -26,14 +26,12 @@ struct CheckboxToggleStyle: ToggleStyle {
 
 // ---------------------------------------------------------------------------
 
-
 struct ContentView: View {
     @StateObject private var locationManager = LocationManager()
-    
+
     @State private var isModalPresented: Bool = false
     @State private var showLocations: Bool = true // State variable to control showing the list
-    
-    
+
     var body: some View {
         VStack {
             if locationManager.permissionDenied {
@@ -50,10 +48,10 @@ struct ContentView: View {
                 } else {
                     Text("No current journey")
                 }
-                
-                Button(action: {
+
+                Button {
                     isModalPresented = true // Show modal to create a new journey
-                }) {
+                } label: {
                     Text("New Journey")
                         .padding()
                         .background(Color.blue)
@@ -61,7 +59,7 @@ struct ContentView: View {
                         .cornerRadius(8)
                 }
                 .padding()
-                
+
                 if showLocations {
                     Text("Current Location")
                         .font(.largeTitle)
@@ -69,7 +67,7 @@ struct ContentView: View {
                     Text("Longitude: \(locationManager.userLongitude)")
                         .padding()
                 }
-                
+
 //                Button(action: {
 //                    locationManager.startNewJourney() // Generate a new GUID for the journey
 //                }) {
@@ -83,9 +81,9 @@ struct ContentView: View {
 //                Text(locationManager.journeyGUID)
 
                 HStack {
-                    Button(action: {
-                        locationManager.requestLocation() // Call the update method on the LocationManager
-                    }) {
+                    Button {
+                        locationManager.requestLocation()
+                    } label: {
                         Text("Check Location")
                             .padding()
                             .background(Color.blue)
@@ -93,14 +91,14 @@ struct ContentView: View {
                             .cornerRadius(8)
                     }
                     .padding()
-                    
-                    Button(action: {
+
+                    Button {
                         if locationManager.isTracking {
                             locationManager.stopTracking()
                         } else {
                             locationManager.startTracking()
                         }
-                    }) {
+                    } label: {
                         Text(locationManager.isTracking ? "Stop Tracker" : "Start Tracker")
                             .padding()
                             .background(locationManager.isTracking ? Color.red : Color.green)
@@ -109,15 +107,14 @@ struct ContentView: View {
                     }
                     .padding()
                 }
-                
+
                 Toggle(isOn: $showLocations) {
                     Text("Show Locations")
                 }
                 .toggleStyle(CheckboxToggleStyle()) // Apply checkbox style
                 .padding()
-                
+
                 if showLocations {
-//                    Map(coordinateRegion: $locationManager.currentLocation.coordinateRegion) { MapPin(coordinate: $locationManager.currentLocation.coordinate) }
                     Text("\(locationManager.locations.count) locations recorded")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
@@ -131,10 +128,13 @@ struct ContentView: View {
                                 .font(.caption)
                             HStack {
                                 Text("Open in - ")
-                                if let googleMapsURL = createGoogleMapsURL(latitude: location.coordinate.latitude, longitude: location.coordinate.longitude) {
+                                let coordinate = location.coordinate
+                                if let googleMapsURL = createGoogleMapsURL(latitude: coordinate.latitude,
+                                                                           longitude: coordinate.longitude) {
                                     Link("Google Maps", destination: googleMapsURL)
                                 }
-                                if let appleMapsURL = createAppleMapsURL(latitude: location.coordinate.latitude, longitude: location.coordinate.longitude) {
+                                if let appleMapsURL = createAppleMapsURL(latitude: coordinate.latitude,
+                                                                         longitude: coordinate.longitude) {
                                     Link("Apple Maps", destination: appleMapsURL)
                                 }
                             }
@@ -151,12 +151,12 @@ struct ContentView: View {
                             locationManager: locationManager)
         }
     }
-    
+
     func createAppleMapsURL(latitude: Double, longitude: Double) -> URL? {
         let urlString = "http://maps.apple.com/?ll=\(latitude),\(longitude)"
         return URL(string: urlString)
     }
-    
+
     func createGoogleMapsURL(latitude: Double, longitude: Double) -> URL? {
         let urlString = "http://maps.google.com/?q=\(latitude),\(longitude)"
         return URL(string: urlString)

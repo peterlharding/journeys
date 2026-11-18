@@ -37,7 +37,8 @@ class TrackerUITestCase: XCTestCase {
     }
 
     func logRecords(_ title: String) {
-        let text = (["\(title): \(recordCount) recorded"] + records.allElementsBoundByIndex.map(\.label)).joined(separator: "\n")
+        let lines = ["\(title): \(recordCount) recorded"] + records.allElementsBoundByIndex.map(\.label)
+        let text = lines.joined(separator: "\n")
         let attachment = XCTAttachment(string: text)
         attachment.lifetime = .keepAlways
         add(attachment)
@@ -79,7 +80,8 @@ final class MovingTrackerUITests: TrackerUITestCase {
         XCTAssertTrue(app.buttons["Stop Tracker"].waitForExistence(timeout: 10))
         logRecords("BACKGROUND RECORDS (before backgrounding: \(before))")
 
-        XCTAssertGreaterThanOrEqual(recordCount - before, minutes, "Expected one record per minute while in the background")
+        XCTAssertGreaterThanOrEqual(recordCount - before, minutes,
+                                    "Expected one record per minute while in the background")
     }
 }
 

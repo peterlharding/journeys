@@ -7,9 +7,8 @@ iPhone and iPad only (never macOS, tvOS or visionOS); an app target plus a UI te
 
 * Build (simulator): `xcodebuild -project LocationDemo.xcodeproj -scheme LocationDemo -destination 'generic/platform=iOS Simulator' build`
 * Lint: `swiftlint lint --quiet LocationDemo` (no `.swiftlint.yml` yet, so default rules apply and it currently reports warnings only)
+* UI tests: `scripts/run-ui-tests.sh [simulator-udid]` (about 10 minutes; the tracker tests wait in real time)
 * List simulators: `xcrun simctl list devices available`
-
-There are no tests.
 
 ## Layout
 

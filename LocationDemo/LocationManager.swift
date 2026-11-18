@@ -94,7 +94,10 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         userLongitude = location.coordinate.longitude
         locations.append(location)
         if let journey = currentJourney {
-            postLocationData(latitude: location.coordinate.latitude, longitude: location.coordinate.longitude, timestamp: location.timestamp, journeyId: journey.id)
+            postLocationData(latitude: location.coordinate.latitude,
+                             longitude: location.coordinate.longitude,
+                             timestamp: location.timestamp,
+                             journeyId: journey.id)
         }
     }
 
@@ -119,7 +122,6 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         print("Failed to find user's location: \(error.localizedDescription)")
     }
 
-
     func postLocationData(latitude: Double, longitude: Double, timestamp: Date, journeyId: UUID) {
 
         let locationData = LocationData(
@@ -128,54 +130,54 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
                                 timestamp: formatDateToISO8601(date: timestamp),
                                 journeyId: "\(journeyId)"
                             )
-        
+
         guard let url = URL(string: "https://mongo-api.performiq.com/waypoints") else {
             print("Invalid URL")
             return
         }
-        
+
         // Create the URLRequest
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        
+
         do {
             // Convert location data to JSON
             let jsonData = try JSONEncoder().encode(locationData)
             request.httpBody = jsonData
-            
+
             // Perform the network request
-            URLSession.shared.dataTask(with: request) { data, response, error in
+            URLSession.shared.dataTask(with: request) { _, response, error in
                 if let error = error {
                     print("Error posting location data: \(error)")
                     return
                 }
-                
+
                 if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 {
                     print("Location data successfully posted")
                 } else {
                     print("Failed to post location data, response: \(String(describing: response))")
                 }
             }.resume()
-            
+
         } catch {
             print("Failed to encode location data: \(error)")
         }
     }
-    
+
     func formatDateToISO8601(date: Date) -> String {
         let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds] // Ensures full ISO 8601 with milliseconds
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds] // ISO 8601 with milliseconds
         return formatter.string(from: date)
     }
-    
+
     func saveJourneyToUserDefaults(journey: JourneyData) {
         let encoder = JSONEncoder()
         if let encodedJourney = try? encoder.encode(journey) {
             UserDefaults.standard.set(encodedJourney, forKey: "currentJourney")
         }
     }
-    
+
     func loadLastJourney() {
         if let savedJourneyData = UserDefaults.standard.data(forKey: "currentJourney") {
             let decoder = JSONDecoder()
@@ -184,10 +186,10 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
             }
         }
     }
-    
+
     // Clear the current journey from UserDefaults
     func clearJourneyFromUserDefaults() {
         UserDefaults.standard.removeObject(forKey: "currentJourney")
     }
-    
+
 }
