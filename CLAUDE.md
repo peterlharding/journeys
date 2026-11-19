@@ -31,7 +31,7 @@ Formerly LocationDemo (renamed 2026-11-19, history kept); the old github.com/pet
 ## Conventions
 
 * iOS 18.0 deployment target, iPhone and iPad, Swift 5 language mode, bundle id `com.performiq.Journeys`.
-* The version is set once, at project level: `MARKETING_VERSION` (semantic, e.g. 1.0.0) and `CURRENT_PROJECT_VERSION` (build number); targets inherit them, and the About sheet and its UI test show them.
+* The version is set once, at project level: `MARKETING_VERSION` (semantic, e.g. 1.1.0) and `CURRENT_PROJECT_VERSION` (build number); targets inherit them, and the About sheet and its UI test show them.
 * Tracking records at most once per `LocationManager.trackingRecordInterval` (60 s), only after moving `minTrackedDistance` (25 m, or the fix's accuracy if larger) from the last recorded fix, and skips cached fixes older than `maxTrackedFixAge` (10 s).
   On a device iOS does not reliably report a still phone as stationary, so the distance check is what stops a still phone recording.
 * Timestamps are sent as ISO 8601 with fractional seconds; `journeyId` is the journey's UUID string.

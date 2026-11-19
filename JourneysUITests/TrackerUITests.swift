@@ -136,7 +136,7 @@ final class JourneyUITests: TrackerUITestCase {
 
 final class AboutUITests: TrackerUITestCase {
 
-    /// The About sheet shows the app's version and build number.
+    /// The About sheet shows the app's version and build number (any version, so bumps need no test change).
     func testAboutShowsVersion() throws {
         let about = app.buttons["About"]
         XCTAssertTrue(about.waitForExistence(timeout: 10))
@@ -145,7 +145,9 @@ final class AboutUITests: TrackerUITestCase {
         // LabeledContent exposes the row as one element labelled "Version, <value>".
         let version = app.staticTexts["aboutVersion"]
         XCTAssertTrue(version.waitForExistence(timeout: 5))
-        XCTAssertEqual(version.label, "Version, 1.0.0 (1)")
+        // "Version, 1.1.0 (1)": the marketing version, then the build number.
+        XCTAssertNotNil(version.label.wholeMatch(of: #/Version, \d+\.\d+\.\d+ \(\d+\)/#),
+                        "Unexpected version row: \(version.label)")
         let screenshot = XCTAttachment(screenshot: app.screenshot())
         screenshot.name = "About"
         screenshot.lifetime = .keepAlways
