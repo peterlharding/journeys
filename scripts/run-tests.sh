@@ -57,6 +57,7 @@ run_tests -only-testing:JourneysUITests/MovingTrackerUITests || status=1
 boot_sim
 xcrun simctl location "$SIM" set -33.8688,151.2093
 run_tests -only-testing:JourneysUITests/StationaryTrackerUITests || status=1
+run_tests -only-testing:JourneysUITests/PersistenceUITests || status=1
 # Journey tests point the app at a failing API path, so they do not write to the real API.
 run_tests -only-testing:JourneysUITests/JourneyUITests || status=1
 run_tests -only-testing:JourneysUITests/AboutUITests || status=1

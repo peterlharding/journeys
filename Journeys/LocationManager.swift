@@ -26,26 +26,34 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     /// and a still phone's fixes drift by a metre or so.
     static let minTrackedDistance: CLLocationDistance = 25
 
-    @Published var userLatitude: Double = 0.0
-    @Published var userLongitude: Double = 0.0
     @Published var permissionDenied: Bool = false
-    @Published private(set) var locations: [RecordedLocation] = []
-    /// The journey new fixes are posted to; persisted in `UserDefaults` so it survives relaunches.
-    @Published private(set) var currentJourney: JourneyData?
+    /// The journey new fixes are added to; remembered by id in `UserDefaults` across relaunches.
+    @Published private(set) var currentJourney: Journey?
     @Published private(set) var isTracking: Bool = false
+
+    let store: Store
+    private let api: APIClient
+    private let defaults: UserDefaults
 
     private var trackingTask: Task<Void, Never>?
     /// Keeps the app running in the background while tracking (shows the location indicator).
     private var backgroundSession: CLBackgroundActivitySession?
     private var lastTracked: CLLocation?
+    /// The last fix recorded, to ignore Core Location handing the same fix over again.
+    private var lastRecorded: CLLocation?
 
-    override init() {
+    /// Nil arguments mean the app's own store, API and defaults; tests pass an in-memory store,
+    /// a stubbed API and their own defaults.
+    init(store: Store? = nil, api: APIClient = .shared, defaults: UserDefaults = .standard) {
+        self.store = store ?? .shared
+        self.api = api
+        self.defaults = defaults
         super.init()
         locationManager.delegate = self
         locationManager.desiredAccuracy = kCLLocationAccuracyBest
         locationManager.requestWhenInUseAuthorization()
 
-        loadLastJourney()  // Load the last journey from UserDefaults when the app starts
+        loadCurrentJourney()
     }
 
     /// Records the current location once, whether or not tracking is running.
@@ -99,23 +107,19 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
             guard location.distance(from: lastTracked) >= threshold else { return }
         }
         lastTracked = location
-        record(location)
+        record(location, source: .tracker)
     }
 
-    /// Records a fix and posts it to the current journey.
+    /// Saves a fix to the current journey (or with no journey), then posts it once.
     /// Core Location can deliver the same cached fix more than once; repeats are ignored.
-    private func record(_ location: CLLocation) {
-        if let last = locations.last?.location, location.isSameFix(as: last) {
+    private func record(_ location: CLLocation, source: Waypoint.Source) {
+        if let lastRecorded, location.isSameFix(as: lastRecorded) {
             return
         }
-        userLatitude = location.coordinate.latitude
-        userLongitude = location.coordinate.longitude
-        locations.append(RecordedLocation(location: location))
-        if let journey = currentJourney {
-            postLocationData(latitude: location.coordinate.latitude,
-                             longitude: location.coordinate.longitude,
-                             timestamp: location.timestamp,
-                             journeyId: journey.id)
+        lastRecorded = location
+        let waypoint = store.addWaypoint(location, source: source, journey: currentJourney)
+        if waypoint.journey != nil {
+            upload(waypoint)
         }
     }
 
@@ -132,7 +136,7 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     nonisolated func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard let location = locations.last else { return }
         MainActor.assumeIsolated {
-            record(location)
+            record(location, source: .checkLocation)
         }
     }
 
@@ -140,27 +144,32 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         print("Failed to find user's location: \(error.localizedDescription)")
     }
 
-    /// Stores a new journey via the API, then makes it the current journey.
+    /// Stores a new journey via the API, then saves it and makes it the current journey.
     /// Throws, leaving the current journey unchanged, if the API does not accept it.
     func createJourney(name: String, notes: String) async throws {
-        let journey = JourneyData(id: UUID(), name: name, notes: notes)
-        try await APIClient.shared.post("journeys", body: journey)
-        currentJourney = journey
-        saveJourneyToUserDefaults(journey: journey)
+        let payload = JourneyData(id: UUID(), name: name, notes: notes)
+        try await api.post("journeys", body: payload)
+        let journey = store.addJourney(id: payload.id, name: name, notes: notes, syncState: .synced)
+        setCurrentJourney(journey)
     }
 
-    private func postLocationData(latitude: Double, longitude: Double, timestamp: Date, journeyId: UUID) {
-        let locationData = LocationData(
-            latitude: latitude,
-            longitude: longitude,
-            timestamp: Self.timestampFormatter.string(from: timestamp),
-            journeyId: journeyId.uuidString
+    /// Posts a waypoint once and records the outcome on it. Failed uploads stay pending;
+    /// retrying them is the sync engine's job (docs/OFFLINE_SYNC.md, phase 3).
+    private func upload(_ waypoint: Waypoint) {
+        guard let journey = waypoint.journey else { return }
+        let payload = LocationData(
+            latitude: waypoint.latitude,
+            longitude: waypoint.longitude,
+            timestamp: Self.timestampFormatter.string(from: waypoint.recordedAt),
+            journeyId: journey.id.uuidString
         )
         Task {
             do {
-                try await APIClient.shared.post("waypoints", body: locationData)
+                try await api.post("waypoints", body: payload)
+                store.markUploaded(waypoint, error: nil)
             } catch {
                 print("Failed to post location data: \(error.localizedDescription)")
+                store.markUploaded(waypoint, error: error)
             }
         }
     }
@@ -172,18 +181,32 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         return formatter
     }()
 
-    // MARK: - Journey persistence
+    // MARK: - Current journey
 
-    private static let currentJourneyKey = "currentJourney"
+    static let currentJourneyIDKey = "currentJourneyID"
+    /// Where versions before 1.2.0 kept the whole current journey, as JSON.
+    static let legacyCurrentJourneyKey = "currentJourney"
 
-    private func saveJourneyToUserDefaults(journey: JourneyData) {
-        if let encoded = try? JSONEncoder().encode(journey) {
-            UserDefaults.standard.set(encoded, forKey: Self.currentJourneyKey)
-        }
+    private func setCurrentJourney(_ journey: Journey) {
+        currentJourney = journey
+        defaults.set(journey.id.uuidString, forKey: Self.currentJourneyIDKey)
     }
 
-    private func loadLastJourney() {
-        guard let data = UserDefaults.standard.data(forKey: Self.currentJourneyKey) else { return }
-        currentJourney = try? JSONDecoder().decode(JourneyData.self, from: data)
+    private func loadCurrentJourney() {
+        importLegacyCurrentJourney()
+        guard let idString = defaults.string(forKey: Self.currentJourneyIDKey),
+              let id = UUID(uuidString: idString) else { return }
+        currentJourney = store.journey(id: id)
+    }
+
+    /// Moves a current journey saved by a version before 1.2.0 into the store.
+    /// Its upload state is unknown, so it is pending; the sync endpoint makes re-sending it harmless.
+    private func importLegacyCurrentJourney() {
+        guard let data = defaults.data(forKey: Self.legacyCurrentJourneyKey) else { return }
+        defer { defaults.removeObject(forKey: Self.legacyCurrentJourneyKey) }
+        guard let legacy = try? JSONDecoder().decode(JourneyData.self, from: data) else { return }
+        let journey = store.journey(id: legacy.id)
+            ?? store.addJourney(id: legacy.id, name: legacy.name, notes: legacy.notes, syncState: .pending)
+        setCurrentJourney(journey)
     }
 }

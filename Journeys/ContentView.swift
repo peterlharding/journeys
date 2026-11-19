@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import CoreData
 import CoreLocation
 
 // ---------------------------------------------------------------------------
@@ -74,21 +75,9 @@ struct ContentView: View {
                 }
                 .padding()
 
-                if showLocations {
-                    Text("Current Location")
-                        .font(.largeTitle)
-                    if locationManager.locations.isEmpty {
-                        Text("No location yet")
-                            .foregroundStyle(.secondary)
-                            .padding(.bottom)
-                    } else {
-                        VStack(spacing: 4) {
-                            Text("Latitude: \(locationManager.userLatitude)")
-                            Text("Longitude: \(locationManager.userLongitude)")
-                        }
-                        .padding(.bottom)
-                    }
-                }
+                RecordedLocationsView(journey: locationManager.currentJourney, part: .header,
+                                      showLocations: showLocations)
+                    .id(locationManager.currentJourney?.objectID)
 
                 HStack {
                     Button {
@@ -124,37 +113,9 @@ struct ContentView: View {
                 .toggleStyle(CheckboxToggleStyle()) // Apply checkbox style
                 .padding()
 
-                if showLocations {
-                    Text("^[\(locationManager.locations.count) location](inflect: true) recorded")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .accessibilityIdentifier("recordCount")
-                    // Displaying the list of all recorded locations
-                    List(locationManager.locations) { recorded in
-                        let location = recorded.location
-                        VStack(alignment: .leading) {
-                            Text("Latitude: \(location.coordinate.latitude)")
-                            Text("Longitude: \(location.coordinate.longitude)")
-                            Text("Timestamp: \(location.timestamp)")
-                                .font(.caption)
-                            HStack {
-                                Text("Open in - ")
-                                let coordinate = location.coordinate
-                                if let googleMapsURL = createGoogleMapsURL(latitude: coordinate.latitude,
-                                                                           longitude: coordinate.longitude) {
-                                    Link("Google Maps", destination: googleMapsURL)
-                                }
-                                if let appleMapsURL = createAppleMapsURL(latitude: coordinate.latitude,
-                                                                         longitude: coordinate.longitude) {
-                                    Link("Apple Maps", destination: appleMapsURL)
-                                }
-                            }
-                            // Keeps each link separately tappable and tinted inside a list row.
-                            .buttonStyle(.borderless)
-                        }
-                    }
-                    .listStyle(.plain)
-                }
+                RecordedLocationsView(journey: locationManager.currentJourney, part: .list,
+                                      showLocations: showLocations)
+                    .id(locationManager.currentJourney?.objectID)
             }
         }
         .padding()
@@ -163,6 +124,81 @@ struct ContentView: View {
         }
         .sheet(isPresented: $isAboutPresented) {
             AboutView()
+        }
+    }
+}
+
+/// The recorded locations of the current journey (or, with no journey, the fixes taken without one),
+/// read from the store so they survive relaunches. Split into the header above the buttons and the
+/// list below them; each part has its own fetch, which Core Data keeps up to date.
+struct RecordedLocationsView: View {
+    enum Part { case header, list }
+
+    let part: Part
+    let showLocations: Bool
+    @FetchRequest private var waypoints: FetchedResults<Waypoint>
+
+    init(journey: Journey?, part: Part, showLocations: Bool) {
+        self.part = part
+        self.showLocations = showLocations
+        _waypoints = FetchRequest(fetchRequest: Waypoint.fetchRequest(for: journey), animation: .default)
+    }
+
+    var body: some View {
+        if showLocations {
+            switch part {
+            case .header: header
+            case .list: list
+            }
+        }
+    }
+
+    private var header: some View {
+        VStack {
+            Text("Current Location")
+                .font(.largeTitle)
+            if let latest = waypoints.last {
+                VStack(spacing: 4) {
+                    Text("Latitude: \(latest.latitude)")
+                    Text("Longitude: \(latest.longitude)")
+                }
+                .padding(.bottom)
+            } else {
+                Text("No location yet")
+                    .foregroundStyle(.secondary)
+                    .padding(.bottom)
+            }
+        }
+    }
+
+    private var list: some View {
+        VStack {
+            Text("^[\(waypoints.count) location](inflect: true) recorded")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .accessibilityIdentifier("recordCount")
+            List(waypoints) { waypoint in
+                VStack(alignment: .leading) {
+                    Text("Latitude: \(waypoint.latitude)")
+                    Text("Longitude: \(waypoint.longitude)")
+                    Text("Timestamp: \(waypoint.recordedAt)")
+                        .font(.caption)
+                    HStack {
+                        Text("Open in - ")
+                        if let googleMapsURL = createGoogleMapsURL(latitude: waypoint.latitude,
+                                                                   longitude: waypoint.longitude) {
+                            Link("Google Maps", destination: googleMapsURL)
+                        }
+                        if let appleMapsURL = createAppleMapsURL(latitude: waypoint.latitude,
+                                                                 longitude: waypoint.longitude) {
+                            Link("Apple Maps", destination: appleMapsURL)
+                        }
+                    }
+                    // Keeps each link separately tappable and tinted inside a list row.
+                    .buttonStyle(.borderless)
+                }
+            }
+            .listStyle(.plain)
         }
     }
 
@@ -179,4 +215,5 @@ struct ContentView: View {
 
 #Preview {
     ContentView()
+        .environment(\.managedObjectContext, Store.inMemory().viewContext)
 }

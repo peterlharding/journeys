@@ -54,6 +54,9 @@ Seen with diagnostic logging on an iPhone 16 Pro Max lying still on a desk:
   Fixed: the tracker skips fixes older than 10 s.
 * Both fixes checked on the device: one record while still for several minutes, a new one after walking, no duplicates.
 * Still open: updates keep arriving every few seconds while still, so the energy saving depends on iOS pausing them; check over a longer still period in the background without a debugger attached.
+* Still open: indoors the tracker still records a few times an hour while stopped.
+  On 2026-11-19 (1.2.0) a phone at a club for an hour recorded 12 waypoints within about 30 m of each other: indoor fixes are imprecise, and their drift sometimes exceeds the threshold, which only uses the newer fix's accuracy.
+  Candidate fix: require movement beyond the combined accuracy of both fixes (or a radius around a running average) before recording.
 
 ## API errors are hidden behind a redirect
 

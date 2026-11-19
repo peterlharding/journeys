@@ -58,14 +58,17 @@ class TrackerUITestCase: XCTestCase {
 final class MovingTrackerUITests: TrackerUITestCase {
 
     /// While moving, the tracker records the first fix and then one location per minute.
+    /// Records persist across launches, so only the ones added during this test are counted.
     func testRecordsOneLocationPerMinuteWhileMoving() throws {
+        XCTAssertTrue(app.staticTexts["recordCount"].waitForExistence(timeout: 10))
+        let before = recordCount
         startTracker()
         let minutes = 3
         sleep(UInt32(minutes * 60 + 15))
-        logRecords("FOREGROUND RECORDS")
+        logRecords("FOREGROUND RECORDS (before: \(before))")
 
-        XCTAssertGreaterThanOrEqual(recordCount, minutes)
-        XCTAssertLessThanOrEqual(recordCount, minutes + 1)
+        XCTAssertGreaterThanOrEqual(recordCount - before, minutes)
+        XCTAssertLessThanOrEqual(recordCount - before, minutes + 1)
     }
 
     /// The tracker keeps recording while the app is in the background.
@@ -155,5 +158,30 @@ final class AboutUITests: TrackerUITestCase {
 
         app.buttons["Done"].tap()
         XCTAssertTrue(about.waitForExistence(timeout: 5))
+    }
+}
+
+final class PersistenceUITests: TrackerUITestCase {
+
+    /// Recorded locations are kept on the phone: after the app is quit and relaunched they are still listed.
+    func testRecordedLocationSurvivesRelaunch() throws {
+        let checkLocation = app.buttons["Check Location"]
+        XCTAssertTrue(checkLocation.waitForExistence(timeout: 10))
+        checkLocation.tap()
+        XCTAssertTrue(records.firstMatch.waitForExistence(timeout: 15))
+        XCTAssertEqual(recordCount, 1)
+        let recorded = records.firstMatch.label
+
+        app.terminate()
+        app.launch()
+
+        XCTAssertTrue(records.firstMatch.waitForExistence(timeout: 10), "Expected the record after relaunch")
+        XCTAssertEqual(recordCount, 1)
+        XCTAssertEqual(records.firstMatch.label, recorded)
+        XCTAssertFalse(app.staticTexts["No location yet"].exists, "The header should show the latest record")
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "After relaunch"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
     }
 }

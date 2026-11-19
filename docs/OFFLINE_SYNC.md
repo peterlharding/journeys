@@ -54,7 +54,9 @@ Indexes on `syncState` and `recordedAt`.
 The current journey is remembered by id in `UserDefaults`.
 
 A `Store` type owns an `NSPersistentContainer`.
-The screens read through the view context (`@FetchRequest`); the tracker and the sync engine write through background contexts, so recording never blocks the UI.
+The screens read through the view context (`@FetchRequest`).
+Recording also writes through the view context: `LocationManager` runs on the main actor and saves at most one small row a minute, which takes about a millisecond (decided while building phase 1).
+The sync engine uses its own background context, so uploads never block the UI.
 The SQLite file uses the default file protection (readable after first unlock), so background tracking can write while the phone is locked.
 Unit tests use an in-memory store.
 
