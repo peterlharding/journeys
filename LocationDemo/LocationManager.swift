@@ -21,8 +21,8 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     @Published var userLongitude: Double = 0.0
     @Published var permissionDenied: Bool = false
     @Published private(set) var locations: [RecordedLocation] = []
-    @Published var journeyGUID: String = "" // Store the current journey GUID
-    @Published var currentJourney: JourneyData? // Store the current journey
+    /// The journey new fixes are posted to; persisted in `UserDefaults` so it survives relaunches.
+    @Published private(set) var currentJourney: JourneyData?
     @Published private(set) var isTracking: Bool = false
 
     private var trackingTask: Task<Void, Never>?
@@ -37,11 +37,6 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         locationManager.requestWhenInUseAuthorization()
 
         loadLastJourney()  // Load the last journey from UserDefaults when the app starts
-    }
-
-    // Method to start a new journey by generating a new GUID
-    func startNewJourney() {
-        journeyGUID = UUID().uuidString
     }
 
     /// Records the current location once, whether or not tracking is running.
@@ -136,11 +131,11 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         saveJourneyToUserDefaults(journey: journey)
     }
 
-    func postLocationData(latitude: Double, longitude: Double, timestamp: Date, journeyId: UUID) {
+    private func postLocationData(latitude: Double, longitude: Double, timestamp: Date, journeyId: UUID) {
         let locationData = LocationData(
             latitude: latitude,
             longitude: longitude,
-            timestamp: formatDateToISO8601(date: timestamp),
+            timestamp: Self.timestampFormatter.string(from: timestamp),
             journeyId: journeyId.uuidString
         )
         Task {
@@ -152,31 +147,25 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         }
     }
 
-    func formatDateToISO8601(date: Date) -> String {
+    /// ISO 8601 with fractional seconds, as the API expects.
+    private static let timestampFormatter: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds] // ISO 8601 with milliseconds
-        return formatter.string(from: date)
-    }
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
 
-    func saveJourneyToUserDefaults(journey: JourneyData) {
-        let encoder = JSONEncoder()
-        if let encodedJourney = try? encoder.encode(journey) {
-            UserDefaults.standard.set(encodedJourney, forKey: "currentJourney")
+    // MARK: - Journey persistence
+
+    private static let currentJourneyKey = "currentJourney"
+
+    private func saveJourneyToUserDefaults(journey: JourneyData) {
+        if let encoded = try? JSONEncoder().encode(journey) {
+            UserDefaults.standard.set(encoded, forKey: Self.currentJourneyKey)
         }
     }
 
-    func loadLastJourney() {
-        if let savedJourneyData = UserDefaults.standard.data(forKey: "currentJourney") {
-            let decoder = JSONDecoder()
-            if let loadedJourney = try? decoder.decode(JourneyData.self, from: savedJourneyData) {
-                self.currentJourney = loadedJourney
-            }
-        }
+    private func loadLastJourney() {
+        guard let data = UserDefaults.standard.data(forKey: Self.currentJourneyKey) else { return }
+        currentJourney = try? JSONDecoder().decode(JourneyData.self, from: data)
     }
-
-    // Clear the current journey from UserDefaults
-    func clearJourneyFromUserDefaults() {
-        UserDefaults.standard.removeObject(forKey: "currentJourney")
-    }
-
 }

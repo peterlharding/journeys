@@ -78,18 +78,6 @@ struct ContentView: View {
                     }
                 }
 
-//                Button(action: {
-//                    locationManager.startNewJourney() // Generate a new GUID for the journey
-//                }) {
-//                    Text("New Journey")
-//                        .padding()
-//                        .background(Color.orange)
-//                        .foregroundColor(.white)
-//                        .cornerRadius(8)
-//                }
-//                .padding()
-//                Text(locationManager.journeyGUID)
-
                 HStack {
                     Button {
                         locationManager.requestLocation()
