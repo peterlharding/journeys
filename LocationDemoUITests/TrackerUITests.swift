@@ -48,7 +48,8 @@ class TrackerUITestCase: XCTestCase {
     private func allowLocationPermissionIfPrompted() {
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
         let allow = springboard.buttons["Allow While Using App"]
-        if allow.waitForExistence(timeout: 5) {
+        // The prompt can take several seconds to appear after launch on a freshly reset simulator.
+        if allow.waitForExistence(timeout: 15) {
             allow.tap()
         }
     }
@@ -130,5 +131,27 @@ final class JourneyUITests: TrackerUITestCase {
 
         app.buttons["Cancel"].tap()
         XCTAssertTrue(app.staticTexts["No current journey"].waitForExistence(timeout: 5))
+    }
+}
+
+final class AboutUITests: TrackerUITestCase {
+
+    /// The About sheet shows the app's version and build number.
+    func testAboutShowsVersion() throws {
+        let about = app.buttons["About"]
+        XCTAssertTrue(about.waitForExistence(timeout: 10))
+        about.tap()
+
+        // LabeledContent exposes the row as one element labelled "Version, <value>".
+        let version = app.staticTexts["aboutVersion"]
+        XCTAssertTrue(version.waitForExistence(timeout: 5))
+        XCTAssertEqual(version.label, "Version, 1.0.0 (1)")
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "About"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+
+        app.buttons["Done"].tap()
+        XCTAssertTrue(about.waitForExistence(timeout: 5))
     }
 }

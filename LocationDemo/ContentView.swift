@@ -30,10 +30,22 @@ struct ContentView: View {
     @StateObject private var locationManager = LocationManager()
 
     @State private var isModalPresented: Bool = false
+    @State private var isAboutPresented = false
     @State private var showLocations: Bool = true // State variable to control showing the list
 
     var body: some View {
         VStack {
+            HStack {
+                Spacer()
+                Button {
+                    isAboutPresented = true
+                } label: {
+                    Image(systemName: "info.circle")
+                        .font(.title2)
+                }
+                .accessibilityLabel("About")
+            }
+
             if locationManager.permissionDenied {
                 Text("Location permission denied. Please enable it in settings.")
                     .foregroundColor(.red)
@@ -148,6 +160,9 @@ struct ContentView: View {
         .padding()
         .sheet(isPresented: $isModalPresented) {
             NewJourneyModal(locationManager: locationManager)
+        }
+        .sheet(isPresented: $isAboutPresented) {
+            AboutView()
         }
     }
 

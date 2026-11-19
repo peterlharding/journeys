@@ -40,3 +40,19 @@ Candidate causes:
 * (Fixed since) `LocationManager` / `TimerManager` were `@ObservedObject` defaults in `ContentView` and could be recreated, leaving leaked timers behind.
 
 The tracker has since been reworked (`CLLocationUpdate.liveUpdates`, one record per minute while moving, no Timer), so re-check on a device whether duplicates still occur before investigating further.
+
+On 2026-11-19 PLH saw three records with the same timestamp (15:19:48) after tapping Start Tracker on an iPhone 16 Pro Max.
+A build with diagnostic logging then recorded exactly one fix per minute, all from the tracker, with no duplicates, over about 6 minutes; the duplicates have not been reproduced since.
+
+## Tracker behaviour on a real device (2026-11-19)
+
+Seen with diagnostic logging on an iPhone 16 Pro Max lying still on a desk:
+
+* `CLLocationUpdate.stationary` stayed false and updates kept arriving every few seconds, so a still device records one fix per minute; "record only while moving" saves less energy on a device than the simulator suggests.
+* The first update after Start Tracker can be a cached fix (24 s old in the test), which is recorded as the journey's first waypoint; consider skipping fixes older than a few seconds.
+
+## API errors are hidden behind a redirect
+
+NGINX in front of mongo-api answers every failing request with a 302 to `https://devel.performiq.com/error`, so the app cannot tell a missing journey (404), a bad body (422) or a backend that is down (502) apart; `APIClient` refuses the redirect and reports "HTTP 302".
+On 2026-11-19 the FastAPI backend was down (even `/hello-world` returned the 302) until PLH restarted it.
+Fix on the server side (return the API's own status and JSON error body for the API host).
