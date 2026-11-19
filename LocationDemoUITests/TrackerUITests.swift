@@ -101,3 +101,34 @@ final class StationaryTrackerUITests: TrackerUITestCase {
         XCTAssertEqual(app.staticTexts["recordCount"].label, "1 location recorded")
     }
 }
+
+final class JourneyUITests: TrackerUITestCase {
+
+    /// Points the app at an API path that does not exist, so the server rejects every request.
+    override func setUp() {
+        app.launchEnvironment["API_BASE_URL"] = "https://mongo-api.performiq.com/does-not-exist"
+        super.setUp()
+    }
+
+    /// A journey the server rejects is not made current, and the sheet stays open with an error.
+    func testRejectedJourneyIsNotSaved() throws {
+        XCTAssertTrue(app.staticTexts["No current journey"].waitForExistence(timeout: 10))
+        app.buttons["New Journey"].tap()
+
+        let name = app.textFields["journeyName"]
+        XCTAssertTrue(name.waitForExistence(timeout: 5))
+        name.tap()
+        name.typeText("Rejected trip")
+        app.buttons["Save"].tap()
+
+        let error = app.staticTexts["saveError"]
+        XCTAssertTrue(error.waitForExistence(timeout: 15), "Expected an error message in the sheet")
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Journey save rejected"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+
+        app.buttons["Cancel"].tap()
+        XCTAssertTrue(app.staticTexts["No current journey"].waitForExistence(timeout: 5))
+    }
+}

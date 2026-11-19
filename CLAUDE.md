@@ -17,11 +17,12 @@ iPhone and iPad only (never macOS, tvOS or visionOS); an app target, a unit test
 * `LocationDemo.xcodeproj/` - Xcode project: app, unit test and UI test targets, and one shared scheme named `LocationDemo`
 * `LocationDemo/LocationDemoApp.swift` - app entry point, shows `ContentView`
 * `LocationDemo/ContentView.swift` - main screen: current journey, New Journey, Check Location and Start/Stop Tracker buttons, location list
-* `LocationDemo/NewJourneyModal.swift` - sheet to create a journey; POSTs it to `/journeys`
+* `LocationDemo/NewJourneyModal.swift` - sheet to create a journey; it becomes current only after `/journeys` accepts it, otherwise the sheet shows the error
+* `LocationDemo/APIClient.swift` - JSON POSTs to the API; only 2xx counts as success and redirects are refused (the API's NGINX turns errors into a 302 to an HTML page); `API_BASE_URL` in the environment overrides the base URL
 * `LocationDemo/LocationManager.swift` - location state; tracking via `CLLocationUpdate.liveUpdates` plus a `CLBackgroundActivitySession`, one-off fixes via `CLLocationManager`; POSTs each recorded fix to `/waypoints` and persists the current journey in `UserDefaults` (key `currentJourney`)
 * `LocationDemo/JourneyData.swift`, `LocationData.swift` - `Codable` payloads sent to the API
 * `LocationDemoTests/` - unit tests (hosted in the app, `@testable import LocationDemo`)
-* `LocationDemoUITests/` - XCUITest tests for the tracker, grouped by the simulated location they need (moving or stationary)
+* `LocationDemoUITests/` - XCUITest tests: the tracker, grouped by the simulated location they need (moving or stationary), and journey creation against a failing API path
 * `scripts/run-tests.sh` - runs the unit tests, then each UI test class with the simulated location it needs
 * `LocationDemo/Info.plist` - background modes (`location`, `processing`, `external-accessory`); the location usage strings live in the build settings as `INFOPLIST_KEY_*`
 

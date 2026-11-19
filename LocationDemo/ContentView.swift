@@ -41,8 +41,10 @@ struct ContentView: View {
                 if let journey = locationManager.currentJourney {
                     Text("Current Journey: \(journey.name)")
                         .font(.headline)
-                    Text("Notes: \(journey.notes)")
-                        .font(.subheadline)
+                    if !journey.notes.isEmpty {
+                        Text("Notes: \(journey.notes)")
+                            .font(.subheadline)
+                    }
                     Text("Id: \(journey.id)")
                         .font(.subheadline)
                 } else {
@@ -157,9 +159,7 @@ struct ContentView: View {
         }
         .padding()
         .sheet(isPresented: $isModalPresented) {
-            NewJourneyModal(isPresented: $isModalPresented,
-                            currentJourney: $locationManager.currentJourney,
-                            locationManager: locationManager)
+            NewJourneyModal(locationManager: locationManager)
         }
     }
 

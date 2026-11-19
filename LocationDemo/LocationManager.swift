@@ -127,46 +127,28 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         print("Failed to find user's location: \(error.localizedDescription)")
     }
 
+    /// Stores a new journey via the API, then makes it the current journey.
+    /// Throws, leaving the current journey unchanged, if the API does not accept it.
+    func createJourney(name: String, notes: String) async throws {
+        let journey = JourneyData(id: UUID(), name: name, notes: notes)
+        try await APIClient.shared.post("journeys", body: journey)
+        currentJourney = journey
+        saveJourneyToUserDefaults(journey: journey)
+    }
+
     func postLocationData(latitude: Double, longitude: Double, timestamp: Date, journeyId: UUID) {
-
         let locationData = LocationData(
-                                latitude: latitude,
-                                longitude: longitude,
-                                timestamp: formatDateToISO8601(date: timestamp),
-                                journeyId: "\(journeyId)"
-                            )
-
-        guard let url = URL(string: "https://mongo-api.performiq.com/waypoints") else {
-            print("Invalid URL")
-            return
-        }
-
-        // Create the URLRequest
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-
-        do {
-            // Convert location data to JSON
-            let jsonData = try JSONEncoder().encode(locationData)
-            request.httpBody = jsonData
-
-            // Perform the network request
-            URLSession.shared.dataTask(with: request) { _, response, error in
-                if let error = error {
-                    print("Error posting location data: \(error)")
-                    return
-                }
-
-                if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 {
-                    print("Location data successfully posted")
-                } else {
-                    print("Failed to post location data, response: \(String(describing: response))")
-                }
-            }.resume()
-
-        } catch {
-            print("Failed to encode location data: \(error)")
+            latitude: latitude,
+            longitude: longitude,
+            timestamp: formatDateToISO8601(date: timestamp),
+            journeyId: journeyId.uuidString
+        )
+        Task {
+            do {
+                try await APIClient.shared.post("waypoints", body: locationData)
+            } catch {
+                print("Failed to post location data: \(error.localizedDescription)")
+            }
         }
     }
 
