@@ -45,9 +45,12 @@ Seen with diagnostic logging on an iPhone 16 Pro Max lying still on a desk:
   Fixed: the tracker skips fixes older than 10 s.
 * Both fixes checked on the device: one record while still for several minutes, a new one after walking, no duplicates.
 * Still open: updates keep arriving every few seconds while still, so the energy saving depends on iOS pausing them; check over a longer still period in the background without a debugger attached.
-* Still open: indoors the tracker still records a few times an hour while stopped.
-  On 2026-11-19 (1.2.0) a phone at a club for an hour recorded 12 waypoints within about 30 m of each other: indoor fixes are imprecise, and their drift sometimes exceeds the threshold, which only uses the newer fix's accuracy.
-  Candidate fix: require movement beyond the combined accuracy of both fixes (or a radius around a running average) before recording.
+* Indoors the tracker recorded a few times an hour while stopped: on 2026-11-19 (1.2.0) a phone at a club for an hour recorded 12 waypoints, the fixes drifting 25 to 36 m with accuracies of 12 to 20 m, and once jumping 160 m and straight back.
+  PLH pointed out that some of those moves were real: the club is large, and he walked from the entrance to the restaurant and to the bar and back.
+  Fixed in 1.5.0: the motion sensors (`MotionMonitor`) decide when they have a reading; stationary means no record at all, and on foot any confirmed move of 25 m counts.
+  Without a motion reading (no permission, low confidence) or in a vehicle, the threshold is twice the worse of the two fixes' accuracies when that exceeds 25 m.
+  Movement must always be confirmed by the next fix; replaying the stop (`testTrackerIgnoresIndoorDrift`) gives one record instead of 11.
+  Still to check on the phone: a walk across a large building with the tracker on.
 
 ## API errors are hidden behind a redirect
 

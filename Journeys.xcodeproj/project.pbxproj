@@ -338,7 +338,7 @@
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
-				MARKETING_VERSION = 1.4.0;
+				MARKETING_VERSION = 1.5.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -399,7 +399,7 @@
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
-				MARKETING_VERSION = 1.4.0;
+				MARKETING_VERSION = 1.5.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				SDKROOT = iphoneos;
@@ -422,6 +422,7 @@
 				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "We need your location to track your journey in both foreground and background.";
 				INFOPLIST_KEY_NSLocationAlwaysUsageDescription = "We need your location for background usage.";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "We need your location to show your coordinates.";
+				INFOPLIST_KEY_NSMotionUsageDescription = "Your motion tells walking from standing still, so journeys record real moves and ignore location drift indoors.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -452,6 +453,7 @@
 				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "We need your location to track your journey in both foreground and background.";
 				INFOPLIST_KEY_NSLocationAlwaysUsageDescription = "We need your location for background usage.";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "We need your location to show your coordinates.";
+				INFOPLIST_KEY_NSMotionUsageDescription = "Your motion tells walking from standing still, so journeys record real moves and ignore location drift indoors.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;

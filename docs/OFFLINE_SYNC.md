@@ -162,7 +162,7 @@ Each phase ends with every test passing and is checked on the phone before the n
   A tap now records exactly one fix: it starts continuous updates and records the first fresh fix (10 s old or less), or, if none comes within 5 s, the newest fix under 2 minutes old (iOS may only ever send an older fix indoors or in the simulator), then stops.
   The UI test uses `scripts/mock_sync_server.py`, which `scripts/run-tests.sh` starts on port 8765.
 
-* Phase 4 (1.4.0): built 2026-11-20.
+* Phase 4 (1.4.0): done 2026-11-20.
   Automatic syncs use a background `URLSession` rather than the `BGProcessingTask` first planned, which iOS runs only when it chooses (typically overnight while charging) and so could not upload promptly on joining Wi-Fi.
   Opening the app cancels an upload still waiting out a retry delay and tries at once.
 

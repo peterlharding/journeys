@@ -21,10 +21,19 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     /// a cached fix from before tracking began (24 s old in a device test).
     static let maxTrackedFixAge: TimeInterval = 10
 
-    /// The tracker records a fix only this far (metres) from the last one it recorded, or further
-    /// when the fix is less accurate. iOS does not reliably report a still device as stationary,
-    /// and a still phone's fixes drift by a metre or so.
+    /// The tracker records a fix only this far (metres) from the last one it recorded, or twice the
+    /// worse of the two fixes' accuracies if that is further. iOS does not reliably report a still
+    /// device as stationary: outdoors its fixes drift by a metre or so, indoors by 25 to 36 m with
+    /// accuracies of 12 to 20 m (an iPhone at a club, 2026-11-19), which twice the accuracy covers.
     static let minTrackedDistance: CLLocationDistance = 25
+
+    /// How far a fix must be from `lastTracked` to count as movement. On foot, the motion sensors
+    /// already say the user is moving, so poor indoor accuracy does not hide a walk across a building.
+    static func movementThreshold(from last: CLLocation, to location: CLLocation,
+                                  motion: MotionState) -> CLLocationDistance {
+        if motion == .onFoot { return minTrackedDistance }
+        return max(minTrackedDistance, 2 * max(location.horizontalAccuracy, last.horizontalAccuracy))
+    }
 
     @Published var permissionDenied: Bool = false
     /// The journey new fixes are added to; remembered by id in `UserDefaults` across relaunches.
@@ -34,12 +43,17 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     let store: Store
     /// Told about every saved record, so it can upload them; nil in tests that only check recording.
     private let syncEngine: SyncEngine?
+    /// What the motion sensors say the user is doing, read while tracking.
+    private let motion: MotionStateProviding
     private let defaults: UserDefaults
 
     private var trackingTask: Task<Void, Never>?
     /// Keeps the app running in the background while tracking (shows the location indicator).
     private var backgroundSession: CLBackgroundActivitySession?
     private var lastTracked: CLLocation?
+    /// Set when one fix has moved past the threshold; the next must too before a record is made,
+    /// so a single wild fix (one jumped 160 m and straight back indoors) is not taken for movement.
+    private var movementUnconfirmed = false
     /// The last fix recorded, to ignore Core Location handing the same fix over again.
     private var lastRecorded: CLLocation?
     /// Set by a Check Location tap until its fix is recorded: only the first fresh fix is wanted.
@@ -55,10 +69,13 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     /// A fix older than this is not the current location and is never recorded by Check Location.
     static let maxCheckLocationFixAge: TimeInterval = 120
 
-    /// A nil store means the app's own; tests pass an in-memory store and their own defaults.
-    init(store: Store? = nil, syncEngine: SyncEngine? = nil, defaults: UserDefaults = .standard) {
+    /// A nil store or motion source means the app's own; tests pass an in-memory store, their own
+    /// defaults and a motion source they control.
+    init(store: Store? = nil, syncEngine: SyncEngine? = nil, motion: MotionStateProviding? = nil,
+         defaults: UserDefaults = .standard) {
         self.store = store ?? .shared
         self.syncEngine = syncEngine
+        self.motion = motion ?? MotionMonitor()
         self.defaults = defaults
         super.init()
         locationManager.delegate = self
@@ -132,6 +149,8 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         guard !isTracking else { return }
         isTracking = true
         lastTracked = nil
+        movementUnconfirmed = false
+        motion.start()
         backgroundSession = CLBackgroundActivitySession()
         trackingTask = Task { [weak self] in
             do {
@@ -150,6 +169,7 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         trackingTask = nil
         backgroundSession?.invalidate()
         backgroundSession = nil
+        motion.stop()
         isTracking = false
     }
 
@@ -162,16 +182,25 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         trackerReceived(location)
     }
 
-    /// Records a fix delivered while tracking: at most once per `trackingRecordInterval`, only after
-    /// moving `minTrackedDistance`, and never a stale cached fix. `now` is injectable for tests.
+    /// Records a fix delivered while tracking: at most once per `trackingRecordInterval`, never while
+    /// the motion sensors say the user is stationary, only after moving past `movementThreshold`,
+    /// confirmed by the next fix, and never a stale cached fix. `now` is injectable for tests.
     func trackerReceived(_ location: CLLocation, now: Date = .now) {
         guard now.timeIntervalSince(location.timestamp) <= Self.maxTrackedFixAge else { return }
         if let lastTracked {
             guard location.timestamp.timeIntervalSince(lastTracked.timestamp) >= Self.trackingRecordInterval
             else { return }
-            let threshold = max(Self.minTrackedDistance, location.horizontalAccuracy)
-            guard location.distance(from: lastTracked) >= threshold else { return }
+            let threshold = Self.movementThreshold(from: lastTracked, to: location, motion: motion.state)
+            guard motion.state != .stationary, location.distance(from: lastTracked) >= threshold else {
+                movementUnconfirmed = false
+                return
+            }
+            guard movementUnconfirmed else {
+                movementUnconfirmed = true
+                return
+            }
         }
+        movementUnconfirmed = false
         lastTracked = location
         record(location, source: .tracker)
     }

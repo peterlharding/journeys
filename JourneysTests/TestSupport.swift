@@ -27,10 +27,27 @@ func makeTestDefaults() -> UserDefaults {
     return defaults
 }
 
-/// A location manager on an empty in-memory store, with its own defaults.
+/// A location manager on an empty in-memory store, with its own defaults and motion source
+/// (unknown unless the test says otherwise, as when motion data is unavailable).
 @MainActor
-func makeManager(store: Store? = nil, syncEngine: SyncEngine? = nil, defaults: UserDefaults? = nil) -> LocationManager {
-    LocationManager(store: store ?? .inMemory(), syncEngine: syncEngine, defaults: defaults ?? makeTestDefaults())
+func makeManager(store: Store? = nil, syncEngine: SyncEngine? = nil, motion: FakeMotion? = nil,
+                 defaults: UserDefaults? = nil) -> LocationManager {
+    LocationManager(store: store ?? .inMemory(), syncEngine: syncEngine, motion: motion ?? FakeMotion(),
+                    defaults: defaults ?? makeTestDefaults())
+}
+
+/// Motion sensors the test controls.
+@MainActor
+final class FakeMotion: MotionStateProviding {
+    var state: MotionState
+    private(set) var isRunning = false
+
+    init(_ state: MotionState = .unknown) {
+        self.state = state
+    }
+
+    func start() { isRunning = true }
+    func stop() { isRunning = false }
 }
 
 /// A network the test switches between Wi-Fi (automatic sync allowed) and mobile data.
