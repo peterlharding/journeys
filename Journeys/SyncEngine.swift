@@ -2,7 +2,7 @@
 //  SyncEngine.swift
 //  Journeys
 //
-//  Uploads pending journeys and waypoints to POST /sync (docs/OFFLINE_SYNC.md, phase 3).
+//  Uploads pending journeys and waypoints to POST /sync (docs/OFFLINE_SYNC.md, phases 3 and 4).
 //
 
 import CoreData
@@ -11,8 +11,9 @@ import Foundation
 /// Uploads what the phone has recorded, oldest first, in batches of up to 500 of each kind.
 ///
 /// A record becomes synced only from the server's answer for it, so a lost reply just means the
-/// batch is sent again and the server answers "duplicate". Automatic syncs run only when
-/// `NetworkStatusProviding` allows (Wi-Fi); Sync now may use any network.
+/// batch is sent again and the server answers "duplicate". Automatic syncs are handed to a
+/// `SyncUploading` (iOS's background transfer service), which uploads on Wi-Fi only, even while the
+/// app is suspended; Sync now uploads in the foreground on any network.
 /// Reading and writing records happens on a background context; the published status is for the UI.
 @MainActor
 final class SyncEngine: ObservableObject {
@@ -41,26 +42,35 @@ final class SyncEngine: ObservableObject {
 
     static let lastSyncedAtKey = "lastSyncedAt"
 
-    private let store: Store
+    let store: Store
     private let api: APIClient
+    private let uploader: SyncUploading
     private let network: NetworkStatusProviding
     private let defaults: UserDefaults
     private let debounce: Duration
 
-    private var isSyncing = false
+    /// A Sync now is running in the foreground.
+    private var isSyncingNow = false
+    /// An automatic sync is deciding whether to hand over a batch. Set before the first suspension,
+    /// so triggers that arrive together (at launch: becoming active, the network's first report)
+    /// hand over one batch, not one each.
+    private var isQueueing = false
     private var consecutiveFailures = 0
     private var debounceTask: Task<Void, Never>?
-    private var retryTask: Task<Void, Never>?
+    /// Recording an upload's answer and queueing the next batch; awaited before iOS suspends the app.
+    private var currentWork: Task<Void, Never>?
 
-    init(store: Store, api: APIClient, network: NetworkStatusProviding, defaults: UserDefaults = .standard,
-         debounce: Duration = .seconds(5)) {
+    init(store: Store, api: APIClient, uploader: SyncUploading, network: NetworkStatusProviding,
+         defaults: UserDefaults = .standard, debounce: Duration = .seconds(5)) {
         self.store = store
         self.api = api
+        self.uploader = uploader
         self.network = network
         self.defaults = defaults
         self.debounce = debounce
         lastSyncedAt = defaults.object(forKey: Self.lastSyncedAtKey) as? Date
         network.onChange = { [weak self] in self?.networkChanged() }
+        uploader.onFinish = { [weak self] result in self?.uploadFinished(result) }
         refreshCounts()
     }
 
@@ -77,40 +87,41 @@ final class SyncEngine: ObservableObject {
         }
     }
 
-    /// The app came to the foreground.
+    /// The app came to the foreground: try at once, rather than waiting out a queued retry's delay.
     func appBecameActive() {
-        Task { await syncAutomatically() }
+        Task {
+            await uploader.cancelDelayedUploads()
+            await syncAutomatically()
+        }
     }
 
-    /// Sync now: any network, straight away, regardless of earlier failures.
-    func syncNow() async {
-        await sync(network: .any)
-    }
-
-    /// Syncs if the network allows automatic sync; otherwise waits for it.
+    /// Hands the next batch to the background uploader, unless one is already with it.
+    /// iOS uploads it on Wi-Fi, even if the app is suspended by then.
     func syncAutomatically() async {
-        guard network.allowsAutomaticSync else {
-            refreshCounts()
-            if pendingCount > 0 { status = .waitingForWiFi }
+        refreshCounts()
+        guard !isSyncingNow, !isQueueing else { return }
+        isQueueing = true
+        defer { isQueueing = false }
+        guard pendingCount > 0 else {
+            if case .failed = status {} else { status = .idle }
             return
         }
-        await sync(network: .unmeteredOnly)
+        if await uploader.hasUploadInFlight() {
+            if case .failed = status {} else { showUploadQueued() }
+            return
+        }
+        if await queueNextBatch(notBefore: nil) {
+            showUploadQueued()
+        }
     }
 
-    private func networkChanged() {
-        // A new network deserves a fresh attempt rather than the rest of an old backoff.
-        consecutiveFailures = 0
-        retryTask?.cancel()
-        Task { await syncAutomatically() }
-    }
-
-    // MARK: - Syncing
-
-    private func sync(network use: APIClient.NetworkUse) async {
-        guard !isSyncing else { return }
-        isSyncing = true
-        defer { isSyncing = false }
-        retryTask?.cancel()
+    /// Sync now: straight away in the foreground, on any network, regardless of earlier failures.
+    func syncNow() async {
+        guard !isSyncingNow else { return }
+        isSyncingNow = true
+        defer { isSyncingNow = false }
+        // Anything queued for later would only be answered "duplicate"; this upload replaces it.
+        await uploader.cancelAll()
         status = .syncing
 
         do {
@@ -118,152 +129,103 @@ final class SyncEngine: ObservableObject {
             while true {
                 let batch = await makeBatch()
                 if batch.isEmpty { break }
-                let data = try await api.post("sync", body: batch, encoder: .sync, network: use)
-                let response = try JSONDecoder().decode(SyncResponse.self, from: data)
-                let progressed = await apply(response, to: batch)
+                let data = try await api.post("sync", body: batch, encoder: .sync, network: .any)
+                let progressed = await apply(try JSONDecoder().decode(SyncResponse.self, from: data))
                 uploaded = uploaded || progressed
                 // A server that answers none of the records would otherwise be asked forever.
                 if !progressed { break }
             }
-            consecutiveFailures = 0
-            // "Last synced" means the server confirmed records, not that there was nothing to send.
-            if uploaded {
-                lastSyncedAt = .now
-                defaults.set(lastSyncedAt, forKey: Self.lastSyncedAtKey)
-            }
-            refreshCounts()
-            status = .idle
-        } catch let error as URLError where error.networkUnavailableReason != nil {
-            // Only mobile data or Low Data Mode is available for an automatic sync: wait for Wi-Fi.
-            refreshCounts()
-            status = .waitingForWiFi
+            succeeded(uploaded: uploaded)
         } catch {
-            consecutiveFailures += 1
-            refreshCounts()
-            status = .failed(error.localizedDescription)
-            scheduleRetry()
+            await failed(error)
         }
     }
 
-    private func scheduleRetry() {
+    /// iOS relaunched the app to deliver background upload answers: `completion` lets it suspend the
+    /// app again, once the answers are recorded and the next batch is queued.
+    func backgroundEventsFinished(_ completion: @escaping () -> Void) {
+        let work = currentWork
+        Task {
+            await work?.value
+            completion()
+        }
+    }
+
+    private func networkChanged() {
+        guard network.allowsAutomaticSync else {
+            if pendingCount > 0, case .syncing = status { status = .waitingForWiFi }
+            return
+        }
+        Task {
+            // A new network deserves a fresh attempt rather than the rest of an old backoff.
+            if consecutiveFailures > 0 {
+                consecutiveFailures = 0
+                await uploader.cancelAll()
+            }
+            await syncAutomatically()
+        }
+    }
+
+    // MARK: - Syncing
+
+    private func showUploadQueued() {
+        status = network.allowsAutomaticSync ? .syncing : .waitingForWiFi
+    }
+
+    /// Queues the oldest pending records with the background uploader. Returns false if there were none.
+    @discardableResult
+    private func queueNextBatch(notBefore: Date?) async -> Bool {
+        let batch = await makeBatch()
+        guard !batch.isEmpty, let body = try? JSONEncoder.sync.encode(batch) else { return false }
+        uploader.upload(body, notBefore: notBefore)
+        return true
+    }
+
+    private func uploadFinished(_ result: Result<(status: Int, body: Data), Error>) {
+        let previous = currentWork
+        currentWork = Task {
+            await previous?.value
+            switch result {
+            case .success(let (code, body)) where (200..<300).contains(code):
+                do {
+                    let progressed = await apply(try JSONDecoder().decode(SyncResponse.self, from: body))
+                    succeeded(uploaded: progressed)
+                    if progressed, pendingCount > 0, await queueNextBatch(notBefore: nil) {
+                        showUploadQueued()
+                    }
+                } catch {
+                    await failed(error)
+                }
+            case .success(let (code, _)):
+                await failed(APIError.unexpectedStatus(code))
+            case .failure(let error as URLError) where error.code == .cancelled:
+                // Cancelled by Sync now or a network change, which upload the records themselves.
+                refreshCounts()
+            case .failure(let error):
+                await failed(error)
+            }
+        }
+    }
+
+    private func succeeded(uploaded: Bool) {
+        consecutiveFailures = 0
+        // "Last synced" means the server confirmed records, not that there was nothing to send.
+        if uploaded {
+            lastSyncedAt = .now
+            defaults.set(lastSyncedAt, forKey: Self.lastSyncedAtKey)
+        }
+        refreshCounts()
+        status = .idle
+    }
+
+    /// Shows the failure and queues a retry with the background uploader, which waits out the delay
+    /// itself, so the retry happens even if the app is suspended by then.
+    private func failed(_ error: Error) async {
+        consecutiveFailures += 1
+        refreshCounts()
+        status = .failed(error.localizedDescription)
         let delay = Self.retryDelay(afterFailures: consecutiveFailures)
-        retryTask?.cancel()
-        retryTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(delay))
-            guard !Task.isCancelled else { return }
-            await self?.syncAutomatically()
-        }
-    }
-
-    /// The oldest pending records: journeys first, then waypoints whose journey the server has or
-    /// is about to receive in this batch, so none is rejected just for arriving before its journey.
-    private func makeBatch() async -> SyncBatch {
-        let context = store.container.newBackgroundContext()
-        return await context.perform {
-            let pending = NSPredicate(format: "syncStateValue == %d", SyncState.pending.rawValue)
-
-            let journeyRequest = Journey.fetchRequest(matching: pending)
-            journeyRequest.fetchLimit = SyncBatch.maxRecords
-            let journeys = (try? context.fetch(journeyRequest)) ?? []
-
-            let waypointRequest = NSFetchRequest<Waypoint>(entityName: "Waypoint")
-            waypointRequest.predicate = NSCompoundPredicate(andPredicateWithSubpredicates: [
-                pending,
-                NSPredicate(format: "journey.syncStateValue == %d OR journey IN %@",
-                            SyncState.synced.rawValue, journeys)
-            ])
-            waypointRequest.sortDescriptors = [NSSortDescriptor(key: "recordedAt", ascending: true)]
-            waypointRequest.fetchLimit = SyncBatch.maxRecords
-            let waypoints = (try? context.fetch(waypointRequest)) ?? []
-
-            return SyncBatch(
-                journeys: journeys.map {
-                    SyncBatch.Journey(id: $0.id, name: $0.name, notes: $0.notes, createdAt: $0.createdAt)
-                },
-                waypoints: waypoints.compactMap { waypoint in
-                    guard let journey = waypoint.journey else { return nil }
-                    return SyncBatch.Waypoint(id: waypoint.id, journeyId: journey.id,
-                                              recordedAt: waypoint.recordedAt, latitude: waypoint.latitude,
-                                              longitude: waypoint.longitude,
-                                              horizontalAccuracy: waypoint.horizontalAccuracy,
-                                              speed: waypoint.speed, course: waypoint.course,
-                                              source: waypoint.sourceValue)
-                }
-            )
-        }
-    }
-
-    /// Records the server's answers. Returns whether any record got an answer.
-    private func apply(_ response: SyncResponse, to batch: SyncBatch) async -> Bool {
-        let journeyOutcomes = SyncResponse.byID(response.journeys)
-        let waypointOutcomes = SyncResponse.byID(response.waypoints)
-        let context = store.container.newBackgroundContext()
-        context.mergePolicy = NSMergeByPropertyObjectTrumpMergePolicy
-
-        return await context.perform {
-            let now = Date.now
-            // Journeys first: a rejected journey marks its waypoints with its own reason.
-            let answered = Self.applyJourneys(journeyOutcomes, ids: batch.journeys.map(\.id), in: context, at: now)
-                + Self.applyWaypoints(waypointOutcomes, ids: batch.waypoints.map(\.id), in: context, at: now)
-            do {
-                try context.save()
-            } catch {
-                print("Could not save sync results: \(error)")
-                return false
-            }
-            return answered > 0
-        }
-    }
-
-    /// Returns how many journeys got an answer.
-    private nonisolated static func applyJourneys(_ outcomes: [UUID: SyncResponse.Outcome], ids: [UUID],
-                                                  in context: NSManagedObjectContext, at now: Date) -> Int {
-        let request = Journey.fetchRequest(matching: NSPredicate(format: "id IN %@", ids))
-        var answered = 0
-        for journey in (try? context.fetch(request)) ?? [] {
-            guard let outcome = outcomes[journey.id] else { continue }
-            answered += 1
-            switch outcome {
-            case .accepted:
-                journey.syncState = .synced
-                journey.syncedAt = now
-                journey.syncError = nil
-            case .rejected(let reason):
-                journey.syncState = .rejected
-                journey.syncError = reason
-                // Its waypoints can never be accepted without it.
-                for waypoint in journey.waypoints where waypoint.syncState == .pending {
-                    waypoint.syncState = .rejected
-                    waypoint.syncError = "Its journey was rejected: \(reason)"
-                }
-            }
-        }
-        return answered
-    }
-
-    /// Returns how many waypoints got an answer.
-    private nonisolated static func applyWaypoints(_ outcomes: [UUID: SyncResponse.Outcome], ids: [UUID],
-                                                   in context: NSManagedObjectContext, at now: Date) -> Int {
-        let request = NSFetchRequest<Waypoint>(entityName: "Waypoint")
-        request.predicate = NSPredicate(format: "id IN %@", ids)
-        var answered = 0
-        for waypoint in (try? context.fetch(request)) ?? [] {
-            guard let outcome = outcomes[waypoint.id] else { continue }
-            answered += 1
-            // Already marked with its journey's reason, which says more than the server's
-            // "no journey with id" for a waypoint whose journey it refused.
-            if waypoint.journey?.syncState == .rejected { continue }
-            switch outcome {
-            case .accepted:
-                waypoint.syncState = .synced
-                waypoint.syncedAt = now
-                waypoint.syncError = nil
-            case .rejected(let reason):
-                waypoint.syncState = .rejected
-                waypoint.syncError = reason
-            }
-        }
-        return answered
+        await queueNextBatch(notBefore: .now.addingTimeInterval(delay))
     }
 
     /// Recounts pending and rejected records for the status line.

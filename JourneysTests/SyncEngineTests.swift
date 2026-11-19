@@ -7,57 +7,12 @@ import CoreData
 import XCTest
 @testable import Journeys
 
-/// A stand-in for POST /sync with the real server's rules (mongo-api doc/SYNC.md): records are
-/// stored once by id, a waypoint needs its journey, and a journey named "Reject me" is refused.
-private final class FakeSyncServer {
-    private(set) var journeys: [String: [String: Any]] = [:]
-    private(set) var waypoints: [String: [String: Any]] = [:]
-    /// Each request's body, decoded.
-    private(set) var batches: [[String: Any]] = []
-    /// When set, the next request is processed but its reply is lost.
-    var loseNextReply = false
-
-    func respond(to body: Data) throws -> (Int, Data) {
-        let batch = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
-        batches.append(batch)
-        var journeyAnswers: [String: String] = [:]
-        var waypointAnswers: [String: String] = [:]
-        for journey in batch["journeys"] as? [[String: Any]] ?? [] {
-            let id = (journey["id"] as? String ?? "").uppercased()
-            if journey["name"] as? String == "Reject me" {
-                journeyAnswers[id] = "rejected: name not allowed"
-            } else {
-                journeyAnswers[id] = journeys[id] == nil ? "stored" : "duplicate"
-                journeys[id] = journeys[id] ?? journey
-            }
-        }
-        for waypoint in batch["waypoints"] as? [[String: Any]] ?? [] {
-            let id = (waypoint["id"] as? String ?? "").uppercased()
-            let journeyID = (waypoint["journeyId"] as? String ?? "").uppercased()
-            if waypoints[id] != nil {
-                waypointAnswers[id] = "duplicate"
-            } else if journeys[journeyID] == nil {
-                waypointAnswers[id] = "rejected: no journey with id \(journeyID)"
-            } else {
-                waypoints[id] = waypoint
-                waypointAnswers[id] = "stored"
-            }
-        }
-        if loseNextReply {
-            loseNextReply = false
-            throw URLError(.networkConnectionLost)
-        }
-        let reply = try JSONSerialization.data(withJSONObject: ["journeys": journeyAnswers,
-                                                                "waypoints": waypointAnswers])
-        return (200, reply)
-    }
-}
-
 @MainActor
 final class SyncEngineTests: XCTestCase {
 
     private var store: Store!
     private var server: FakeSyncServer!
+    private var uploader: FakeUploader!
     private let start = Date(timeIntervalSince1970: 1_800_000_000)
 
     override func setUp() {
@@ -66,11 +21,14 @@ final class SyncEngineTests: XCTestCase {
         server = FakeSyncServer()
         let server = server!
         StubURLProtocol.responder = { body in try server.respond(to: body) }
+        uploader = FakeUploader()
+        uploader.respond = { body in try server.respond(to: body) }
     }
 
-    private func makeEngine(wifi: Bool = true) -> SyncEngine {
-        SyncEngine(store: store, api: makeStubAPI(), network: FakeNetwork(wifi: wifi),
-                   defaults: makeTestDefaults(), debounce: .zero)
+    private func makeEngine(wifi: Bool = true, network: FakeNetwork? = nil,
+                            defaults: UserDefaults? = nil) -> SyncEngine {
+        SyncEngine(store: store, api: makeStubAPI(), uploader: uploader, network: network ?? FakeNetwork(wifi: wifi),
+                   defaults: defaults ?? makeTestDefaults(), debounce: .zero)
     }
 
     @discardableResult
@@ -233,25 +191,6 @@ final class SyncEngineTests: XCTestCase {
         XCTAssertEqual(journey.syncState, .pending)
     }
 
-    // MARK: - When to sync
-
-    /// Off Wi-Fi, automatic sync waits; joining Wi-Fi uploads without being asked.
-    func testAutomaticSyncWaitsForWiFi() async {
-        let journey = addJourney(waypoints: 1)
-        let network = FakeNetwork(wifi: false)
-        let engine = SyncEngine(store: store, api: makeStubAPI(), network: network,
-                                defaults: makeTestDefaults(), debounce: .zero)
-
-        engine.recordSaved()
-        await waitUntil { engine.status == .waitingForWiFi }
-        XCTAssertTrue(server.batches.isEmpty)
-
-        network.allowsAutomaticSync = true
-        await waitUntil { journey.syncState == .synced }
-        XCTAssertEqual(server.batches.count, 1)
-        XCTAssertEqual(engine.status, .idle)
-    }
-
     /// Sync now uploads even off Wi-Fi.
     func testSyncNowUsesAnyNetwork() async {
         let journey = addJourney(waypoints: 1)
@@ -278,13 +217,11 @@ final class SyncEngineTests: XCTestCase {
     func testLastSyncTimeIsRemembered() async {
         addJourney(waypoints: 1)
         let defaults = makeTestDefaults()
-        let engine = SyncEngine(store: store, api: makeStubAPI(), network: FakeNetwork(wifi: true),
-                                defaults: defaults)
+        let engine = makeEngine(defaults: defaults)
 
         await engine.syncNow()
 
-        let relaunched = SyncEngine(store: store, api: makeStubAPI(), network: FakeNetwork(wifi: true),
-                                    defaults: defaults)
+        let relaunched = makeEngine(defaults: defaults)
         XCTAssertEqual(relaunched.lastSyncedAt, engine.lastSyncedAt)
         XCTAssertNotNil(relaunched.lastSyncedAt)
     }

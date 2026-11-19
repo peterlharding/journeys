@@ -33,11 +33,19 @@ struct ContentView: View {
 
     @State private var isModalPresented: Bool = false
     @State private var isAboutPresented = false
+    @State private var isJourneysPresented = false
     @State private var showLocations: Bool = true // State variable to control showing the list
 
     var body: some View {
         VStack {
             HStack {
+                Button {
+                    isJourneysPresented = true
+                } label: {
+                    Image(systemName: "list.bullet.rectangle")
+                        .font(.title2)
+                }
+                .accessibilityLabel("Journeys")
                 Spacer()
                 Button {
                     isAboutPresented = true
@@ -127,6 +135,9 @@ struct ContentView: View {
         }
         .sheet(isPresented: $isAboutPresented) {
             AboutView()
+        }
+        .sheet(isPresented: $isJourneysPresented) {
+            JourneysView(currentJourneyID: locationManager.currentJourney?.id)
         }
     }
 }
@@ -221,5 +232,16 @@ struct RecordedLocationsView: View {
     ContentView()
         .environment(\.managedObjectContext, store.viewContext)
         .environmentObject(LocationManager(store: store))
-        .environmentObject(SyncEngine(store: store, api: .shared, network: NetworkMonitor()))
+        .environmentObject(SyncEngine(store: store, api: .shared, uploader: PreviewUploader(),
+                                      network: NetworkMonitor()))
+}
+
+/// Previews never hand anything to iOS's background transfer service.
+@MainActor
+private final class PreviewUploader: SyncUploading {
+    var onFinish: ((Result<(status: Int, body: Data), Error>) -> Void)?
+    func hasUploadInFlight() async -> Bool { false }
+    func upload(_ body: Data, notBefore: Date?) {}
+    func cancelDelayedUploads() async {}
+    func cancelAll() async {}
 }

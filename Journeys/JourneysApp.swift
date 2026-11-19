@@ -9,43 +9,37 @@ import SwiftUI
 
 @main
 struct JourneysApp: App {
-    @Environment(\.scenePhase) private var scenePhase
-
-    @StateObject private var syncEngine: SyncEngine
-    @StateObject private var locationManager: LocationManager
-
-    /// Unit tests run inside the app; the app then stays inert, so tests never upload real data.
-    private static let isHostingUnitTests = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
-
-    init() {
-        let network: NetworkStatusProviding = Self.isHostingUnitTests ? NoNetwork() : NetworkMonitor()
-        let engine = SyncEngine(store: .shared, api: .shared, network: network)
-        _syncEngine = StateObject(wrappedValue: engine)
-        _locationManager = StateObject(wrappedValue: LocationManager(store: .shared, syncEngine: engine))
-    }
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     var body: some Scene {
         WindowGroup {
-            if Self.isHostingUnitTests {
+            if AppDelegate.isHostingUnitTests {
                 Text("Running unit tests")
             } else {
-                ContentView()
-                    .environment(\.managedObjectContext, Store.shared.viewContext)
-                    .environmentObject(locationManager)
-                    .environmentObject(syncEngine)
-            }
-        }
-        .onChange(of: scenePhase) { _, phase in
-            if phase == .active && !Self.isHostingUnitTests {
-                syncEngine.appBecameActive()
+                RootView()
             }
         }
     }
 }
 
-/// The network while hosting unit tests: automatic sync is never allowed.
-@MainActor
-private final class NoNetwork: NetworkStatusProviding {
-    let allowsAutomaticSync = false
-    var onChange: (() -> Void)?
+/// The main screen with the app's services, syncing whenever the app becomes active.
+private struct RootView: View {
+    @Environment(\.scenePhase) private var scenePhase
+
+    @StateObject private var syncEngine = AppServices.shared.syncEngine
+    @StateObject private var locationManager = AppServices.shared.locationManager
+
+    var body: some View {
+        ContentView()
+            .environment(\.managedObjectContext, Store.shared.viewContext)
+            .environmentObject(locationManager)
+            .environmentObject(syncEngine)
+            .onChange(of: scenePhase) { _, phase in
+                switch phase {
+                case .active: syncEngine.appBecameActive()
+                case .background: AppServices.shared.scheduleRefreshIfNeeded()
+                default: break
+                }
+            }
+    }
 }

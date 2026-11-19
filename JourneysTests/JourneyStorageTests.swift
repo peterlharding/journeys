@@ -40,8 +40,9 @@ final class JourneyStorageTests: XCTestCase {
     /// Saved journeys and fixes are handed to the sync engine, which waits for Wi-Fi to upload them.
     func testSavedRecordsAreQueuedForSync() async throws {
         let store = Store.inMemory()
-        let engine = SyncEngine(store: store, api: makeStubAPI(), network: FakeNetwork(wifi: false),
-                                defaults: makeTestDefaults(), debounce: .zero)
+        let uploader = FakeUploader()
+        let engine = SyncEngine(store: store, api: makeStubAPI(), uploader: uploader,
+                                network: FakeNetwork(wifi: false), defaults: makeTestDefaults(), debounce: .zero)
         let manager = makeManager(store: store, syncEngine: engine)
 
         manager.createJourney(name: "Commute", notes: "")
@@ -53,14 +54,15 @@ final class JourneyStorageTests: XCTestCase {
         XCTAssertEqual(engine.pendingJourneys, 1)
         XCTAssertEqual(engine.pendingWaypoints, 1)
         await waitUntil { engine.status == .waitingForWiFi }
+        XCTAssertEqual(uploader.queued.count, 1, "Handed to iOS to upload once Wi-Fi is available")
         XCTAssertTrue(StubURLProtocol.requests.isEmpty)
     }
 
     /// A Check Location fix taken with no current journey is saved but never queued for upload.
     func testFixWithoutJourneyIsSavedButNotQueued() throws {
         let store = Store.inMemory()
-        let engine = SyncEngine(store: store, api: makeStubAPI(), network: FakeNetwork(wifi: true),
-                                defaults: makeTestDefaults())
+        let engine = SyncEngine(store: store, api: makeStubAPI(), uploader: FakeUploader(),
+                                network: FakeNetwork(wifi: true), defaults: makeTestDefaults())
         let manager = makeManager(store: store, syncEngine: engine)
 
         manager.startCheckLocation()

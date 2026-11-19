@@ -83,8 +83,11 @@ Triggers:
 * A record is saved (debounced by a few seconds, so a burst becomes one batch).
 * The network becomes allowed (Wi-Fi joins).
 * The app comes to the foreground.
-* A background processing task (`BGProcessingTask` with `requiresNetworkConnectivity`), scheduled whenever records are pending.
-  `Info.plist` already declares the `processing` background mode; the task identifier is added to `BGTaskSchedulerPermittedIdentifiers`, which also clears the App Review concern noted in the backlog.
+* Automatic uploads go through a background `URLSession` (phase 4): iOS performs them on Wi-Fi even while the app is suspended or has been terminated by the system, then wakes the app to record the answers and queue the next batch.
+  Retries after a failure use the upload's `earliestBeginDate`, so iOS waits out the delay itself.
+  A user force-quitting the app cancels them; they are queued again when it next opens.
+* A background app refresh task (`BGAppRefreshTask`), scheduled when the app goes to the background with records pending, as a backstop.
+  `Info.plist` declares the `fetch` and `location` background modes and the task identifier; the unused `processing` and `external-accessory` modes were removed.
 * Sync now.
 
 ### Network policy
@@ -147,17 +150,21 @@ Each phase ends with every test passing and is checked on the phone before the n
    Tests: engine unit tests with a stub `URLProtocol` and an injected network path (batching, ordering, lost reply then retry, 4xx, 5xx backoff, Wi-Fi only); a UI test against a small local mock of `/sync` that starts offline, records, then syncs.
    Phone check: airplane mode, mobile data only, then Wi-Fi.
 4. **Background sync and history** (app 1.4.0).
-   The background processing task and the Journeys screen.
+   Background uploads, the refresh task and the Journeys screen.
    Phone check: record with Wi-Fi off, lock the phone, turn Wi-Fi on, and confirm the upload happens without opening the app.
 
 ## Progress
 
 * Phase 1 (1.2.0): done 2026-11-20.
 * Phase 2: done 2026-11-20; `POST /sync` is live on vega (mongo-api `devel`, `doc/SYNC.md` there), and NGINX now passes the API's own status codes through.
-* Phase 3 (1.3.0): built 2026-11-20.
+* Phase 3 (1.3.0): done 2026-11-20.
   Building it showed that one Check Location tap could record two fixes, because iOS can deliver more than one per request.
   A tap now records exactly one fix: it starts continuous updates and records the first fresh fix (10 s old or less), or, if none comes within 5 s, the newest fix under 2 minutes old (iOS may only ever send an older fix indoors or in the simulator), then stops.
   The UI test uses `scripts/mock_sync_server.py`, which `scripts/run-tests.sh` starts on port 8765.
+
+* Phase 4 (1.4.0): built 2026-11-20.
+  Automatic syncs use a background `URLSession` rather than the `BGProcessingTask` first planned, which iOS runs only when it chooses (typically overnight while charging) and so could not upload promptly on joining Wi-Fi.
+  Opening the app cancels an upload still waiting out a retry delay and tries at once.
 
 ## Open questions
 

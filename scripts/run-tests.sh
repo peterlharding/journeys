@@ -59,12 +59,23 @@ xcrun simctl location "$SIM" start --speed=15 - <<'EOF'
 EOF
 run_tests -only-testing:JourneysUITests/MovingTrackerUITests || status=1
 
-boot_sim
-xcrun simctl location "$SIM" set -33.8688,151.2093
+# A fixed simulated location keeps the timestamp it was set with, and Check Location ignores fixes
+# over 2 minutes old, so set it afresh before each class.
+fixed_location() {
+  boot_sim
+  xcrun simctl location "$SIM" set -33.8688,151.2093
+}
+
+fixed_location
 run_tests -only-testing:JourneysUITests/StationaryTrackerUITests || status=1
+fixed_location
 run_tests -only-testing:JourneysUITests/PersistenceUITests || status=1
+fixed_location
 run_tests -only-testing:JourneysUITests/SyncUITests || status=1
-# Journey tests point the app at a failing API path, so they do not write to the real API.
+fixed_location
+run_tests -only-testing:JourneysUITests/JourneysScreenUITests || status=1
+# UI tests point the app at an unreachable local port unless a test sets API_BASE_URL,
+# so they never write to the real API.
 run_tests -only-testing:JourneysUITests/JourneyUITests || status=1
 run_tests -only-testing:JourneysUITests/AboutUITests || status=1
 

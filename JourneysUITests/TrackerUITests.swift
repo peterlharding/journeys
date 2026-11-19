@@ -221,6 +221,7 @@ final class SyncUITests: TrackerUITestCase {
         let state = mockState()
         XCTAssertEqual((state["journeys"] as? [String])?.count, 1)
         XCTAssertEqual((state["waypoints"] as? [String])?.count, 1)
+        XCTAssertEqual(state["requests"] as? Int, 1, "One upload, not one per trigger")
         let screenshot = XCTAttachment(screenshot: app.screenshot())
         screenshot.name = "All synced"
         screenshot.lifetime = .keepAlways
@@ -252,5 +253,43 @@ final class SyncUITests: TrackerUITestCase {
         }.resume()
         wait(for: [done], timeout: 10)
         return result
+    }
+}
+
+/// The Journeys screen lists journeys newest first and opens one to its waypoints.
+final class JourneysScreenUITests: TrackerUITestCase {
+
+    func testJourneysAreListedAndOpenToTheirWaypoints() throws {
+        createJourney(named: "First trip")
+        XCTAssertTrue(app.staticTexts["Current Journey: First trip"].waitForExistence(timeout: 5))
+        app.buttons["Check Location"].tap()
+        XCTAssertTrue(records.firstMatch.waitForExistence(timeout: 15))
+        createJourney(named: "Second trip")
+        XCTAssertTrue(app.staticTexts["Current Journey: Second trip"].waitForExistence(timeout: 5))
+
+        app.buttons["Journeys"].tap()
+        let rows = app.buttons.matching(identifier: "journeyRow")
+        XCTAssertTrue(rows.firstMatch.waitForExistence(timeout: 5))
+        XCTAssertEqual(rows.count, 2)
+        let newest = rows.element(boundBy: 0).label
+        let oldest = rows.element(boundBy: 1).label
+        XCTAssertTrue(newest.contains("Second trip") && newest.contains("Current"), newest)
+        XCTAssertTrue(oldest.contains("First trip") && oldest.contains("1 waypoint"), oldest)
+        XCTAssertFalse(oldest.contains("Current"), oldest)
+        attachScreenshot("Journeys list")
+
+        rows.element(boundBy: 1).tap()
+        let waypoints = app.descendants(matching: .any).matching(identifier: "waypointRow")
+        XCTAssertTrue(waypoints.firstMatch.waitForExistence(timeout: 5))
+        XCTAssertEqual(waypoints.count, 1)
+        XCTAssertTrue(waypoints.firstMatch.label.contains("Waiting to upload"), waypoints.firstMatch.label)
+        attachScreenshot("Journey detail")
+    }
+
+    private func attachScreenshot(_ name: String) {
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = name
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
     }
 }

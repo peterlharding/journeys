@@ -7,11 +7,14 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>com.performiq.Journeys.refresh</string>
+	</array>
 	<key>UIBackgroundModes</key>
 	<array>
-		<string>processing</string>
+		<string>fetch</string>
 		<string>location</string>
-		<string>external-accessory</string>
 	</array>
 </dict>
 </plist>

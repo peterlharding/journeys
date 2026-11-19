@@ -54,3 +54,105 @@ func waitUntil(_ condition: () -> Bool, file: StaticString = #filePath, line: UI
     }
     XCTAssertTrue(condition(), "Timed out waiting", file: file, line: line)
 }
+
+/// Stands in for iOS's background transfer service: holds queued uploads until the test delivers
+/// them (as iOS would once Wi-Fi is available), answering with `respond`.
+@MainActor
+final class FakeUploader: SyncUploading {
+    struct Upload {
+        let body: Data
+        let notBefore: Date?
+    }
+
+    var onFinish: ((Result<(status: Int, body: Data), Error>) -> Void)?
+    /// Answers an upload body; throwing fails the upload as if the network were down.
+    var respond: (Data) throws -> (Int, Data) = { _ in (200, Data(#"{"journeys": {}, "waypoints": {}}"#.utf8)) }
+
+    private(set) var queued: [Upload] = []
+    private(set) var cancelCount = 0
+
+    /// Suspends, as asking the real session does, so racing callers interleave as they would on a phone.
+    func hasUploadInFlight() async -> Bool {
+        await Task.yield()
+        return !queued.isEmpty
+    }
+
+    func upload(_ body: Data, notBefore: Date?) {
+        queued.append(Upload(body: body, notBefore: notBefore))
+    }
+
+    func cancelDelayedUploads() async {
+        let delayed = queued.filter { ($0.notBefore ?? .distantPast) > .now }
+        queued.removeAll { ($0.notBefore ?? .distantPast) > .now }
+        for _ in delayed {
+            onFinish?(.failure(URLError(.cancelled)))
+        }
+    }
+
+    func cancelAll() async {
+        cancelCount += 1
+        let cancelled = queued
+        queued = []
+        for _ in cancelled {
+            onFinish?(.failure(URLError(.cancelled)))
+        }
+    }
+
+    /// Performs the oldest queued upload and reports the answer, as iOS would.
+    func deliverNext() {
+        guard !queued.isEmpty else { return }
+        let upload = queued.removeFirst()
+        do {
+            let (status, body) = try respond(upload.body)
+            onFinish?(.success((status, body)))
+        } catch {
+            onFinish?(.failure(error))
+        }
+    }
+}
+
+/// A stand-in for POST /sync with the real server's rules (mongo-api doc/SYNC.md): records are
+/// stored once by id, a waypoint needs its journey, and a journey named "Reject me" is refused.
+final class FakeSyncServer {
+    private(set) var journeys: [String: [String: Any]] = [:]
+    private(set) var waypoints: [String: [String: Any]] = [:]
+    /// Each request's body, decoded.
+    private(set) var batches: [[String: Any]] = []
+    /// When set, the next request is processed but its reply is lost.
+    var loseNextReply = false
+
+    func respond(to body: Data) throws -> (Int, Data) {
+        let batch = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        batches.append(batch)
+        var journeyAnswers: [String: String] = [:]
+        var waypointAnswers: [String: String] = [:]
+        for journey in batch["journeys"] as? [[String: Any]] ?? [] {
+            let id = (journey["id"] as? String ?? "").uppercased()
+            if journey["name"] as? String == "Reject me" {
+                journeyAnswers[id] = "rejected: name not allowed"
+            } else {
+                journeyAnswers[id] = journeys[id] == nil ? "stored" : "duplicate"
+                journeys[id] = journeys[id] ?? journey
+            }
+        }
+        for waypoint in batch["waypoints"] as? [[String: Any]] ?? [] {
+            let id = (waypoint["id"] as? String ?? "").uppercased()
+            let journeyID = (waypoint["journeyId"] as? String ?? "").uppercased()
+            if waypoints[id] != nil {
+                waypointAnswers[id] = "duplicate"
+            } else if journeys[journeyID] == nil {
+                waypointAnswers[id] = "rejected: no journey with id \(journeyID)"
+            } else {
+                waypoints[id] = waypoint
+                waypointAnswers[id] = "stored"
+            }
+        }
+        if loseNextReply {
+            loseNextReply = false
+            throw URLError(.networkConnectionLost)
+        }
+        let reply = try JSONSerialization.data(withJSONObject: ["journeys": journeyAnswers,
+                                                                "waypoints": waypointAnswers])
+        return (200, reply)
+    }
+}
