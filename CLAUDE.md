@@ -1,6 +1,6 @@
 # Journeys
 
-A SwiftUI iOS app that records named journeys, keeps them and their waypoints in an on-device Core Data store, and uploads them to the PerformIQ Mongo API (`https://mongo-api.performiq.com`).
+A SwiftUI iOS app that records named journeys, keeps them and their waypoints in an on-device Core Data store, and uploads them in batches to the PerformIQ Mongo API's `POST /sync` (`https://mongo-api.performiq.com`, contract in mongo-api's `doc/SYNC.md`), automatically on Wi-Fi.
 iPhone and iPad only (never macOS, tvOS or visionOS); an app target, a unit test target and a UI test target, no external dependencies.
 Formerly LocationDemo (renamed 2026-11-19, history kept); the old github.com/peterlharding/LocationDemo repo is retired.
 
@@ -17,32 +17,34 @@ Formerly LocationDemo (renamed 2026-11-19, history kept); the old github.com/pet
 * `docs/BACKLOG.md` - known issues and work not yet started
 * `docs/OFFLINE_SYNC.md` - plan for the local store and Wi-Fi sync (phases 1 to 4)
 * `Journeys.xcodeproj/` - Xcode project: app, unit test and UI test targets, and one shared scheme named `Journeys`
-* `Journeys/JourneysApp.swift` - app entry point, shows `ContentView`
-* `Journeys/ContentView.swift` - main screen: About (info) button, current journey, New Journey, Check Location and Start/Stop Tracker buttons; `RecordedLocationsView` shows the current journey's waypoints (or fixes with no journey) from the store
+* `Journeys/JourneysApp.swift` - app entry point: creates the `SyncEngine` and `LocationManager`, syncs when the app becomes active, and stays inert when hosting unit tests (so they never upload)
+* `Journeys/ContentView.swift` - main screen: About (info) button, current journey, New Journey, Check Location and Start/Stop Tracker buttons, `SyncStatusView` (what is waiting, Sync now); `RecordedLocationsView` shows the current journey's waypoints (or fixes with no journey) from the store
 * `Journeys/Store.swift` - Core Data stack (`Store`), the `Journey` and `Waypoint` model classes and `SyncState`; `Journeys.xcdatamodeld` is the versioned model (add a new model version for any schema change)
 * `Journeys/AboutView.swift` - About sheet: app name, version and build, API host
-* `Journeys/NewJourneyModal.swift` - sheet to create a journey; it becomes current only after `/journeys` accepts it, otherwise the sheet shows the error
-* `Journeys/APIClient.swift` - JSON POSTs to the API; only 2xx counts as success and redirects are refused (the API's NGINX turns errors into a 302 to an HTML page); `API_BASE_URL` in the environment overrides the base URL
-* `Journeys/LocationManager.swift` - location state; tracking via `CLLocationUpdate.liveUpdates` plus a `CLBackgroundActivitySession`, one-off fixes via `CLLocationManager`; saves each recorded fix as a `Waypoint`, POSTs it once to `/waypoints` and records the outcome; remembers the current journey by id in `UserDefaults` (key `currentJourneyID`) and imports the JSON `currentJourney` saved by versions before 1.2.0
-* `Journeys/JourneyData.swift`, `LocationData.swift` - `Codable` payloads sent to the API
-* `JourneysTests/` - unit tests (hosted in the app, `@testable import Journeys`); `TestSupport.swift` gives each test an in-memory store, a stubbed API and its own `UserDefaults`
-* `JourneysUITests/` - XCUITest tests: the tracker, grouped by the simulated location they need (moving or stationary), journey creation against a failing API path, records surviving a relaunch, and the About sheet
-* `scripts/run-tests.sh` - runs the unit tests, then each UI test class with the simulated location it needs
-* `Journeys/Info.plist` - background modes (`location`, `processing`, `external-accessory`); the location usage strings live in the build settings as `INFOPLIST_KEY_*`
+* `Journeys/NewJourneyModal.swift` - sheet to create a journey; it is saved and becomes current at once, online or not
+* `Journeys/SyncEngine.swift` - uploads pending journeys and waypoints to `POST /sync`, oldest first, up to 500 per batch, on a background context; marks each record from the server's answer; retries failures with backoff (30 s doubling to 30 min); automatic syncs only when `NetworkMonitor` allows (not expensive or constrained), Sync now on any network
+* `Journeys/SyncPayload.swift` - the `/sync` request and response; `Journeys/NetworkMonitor.swift` - `NWPathMonitor` behind `NetworkStatusProviding`, so tests can fake the network
+* `Journeys/APIClient.swift` - JSON POSTs to the API; only 2xx counts as success and redirects are refused; two sessions, one that iOS keeps off mobile data and Low Data Mode (automatic sync) and one for any network; `API_BASE_URL` in the environment overrides the base URL
+* `Journeys/LocationManager.swift` - location state; tracking via `CLLocationUpdate.liveUpdates` plus a `CLBackgroundActivitySession`, one-off fixes via `CLLocationManager`; saves each recorded fix as a `Waypoint` and tells the `SyncEngine`; a Check Location tap records exactly one fix (the first fresh one, else after 5 s the newest under 2 minutes old) using continuous updates that stop once it is recorded; remembers the current journey by id in `UserDefaults` (key `currentJourneyID`) and imports the JSON `currentJourney` saved by versions before 1.2.0
+* `Journeys/JourneyData.swift` - the JSON current journey saved by versions before 1.2.0, decoded once on upgrade
+* `JourneysTests/` - unit tests (hosted in the app, `@testable import Journeys`); `TestSupport.swift` gives each test an in-memory store, a stubbed API (`StubURLProtocol`), a `FakeNetwork` and its own `UserDefaults`
+* `JourneysUITests/` - XCUITest tests: the tracker, grouped by the simulated location they need (moving or stationary), offline journey creation, records surviving a relaunch, offline records syncing to the mock server, and the About sheet; UI tests point `API_BASE_URL` at an unreachable local port unless a test sets it, so they never upload to the real API
+* `scripts/run-tests.sh` - runs the unit tests, then each UI test class with the simulated location it needs, with `scripts/mock_sync_server.py` (an in-memory `/sync`) on port 8765
+* `Journeys/Info.plist` - background modes (`location`, `processing`, `external-accessory`) and `NSAllowsLocalNetworking` (plain HTTP to local addresses, for the mock server); the location usage strings live in the build settings as `INFOPLIST_KEY_*`
 
 ## Conventions
 
 * iOS 18.0 deployment target, iPhone and iPad, Swift 5 language mode, bundle id `com.performiq.Journeys`.
-* The version is set once, at project level: `MARKETING_VERSION` (semantic, e.g. 1.2.0) and `CURRENT_PROJECT_VERSION` (build number); targets inherit them, and the About sheet and its UI test show them.
+* The version is set once, at project level: `MARKETING_VERSION` (semantic, e.g. 1.3.0) and `CURRENT_PROJECT_VERSION` (build number); targets inherit them, and the About sheet and its UI test show them.
 * Tracking records at most once per `LocationManager.trackingRecordInterval` (60 s), only after moving `minTrackedDistance` (25 m, or the fix's accuracy if larger) from the last recorded fix, and skips cached fixes older than `maxTrackedFixAge` (10 s).
   On a device iOS does not reliably report a still phone as stationary, so the distance check is what stops a still phone recording.
 * Timestamps are sent as ISO 8601 with fractional seconds; `journeyId` is the journey's UUID string.
 * Everything recorded is saved to the store before any upload; a waypoint's `syncState` says whether the API has it (pending, synced, rejected).
-  The UI and `LocationManager` use the store's main-actor `viewContext`; background work (the phase 3 sync engine) should use its own background context.
+  The UI and `LocationManager` use the store's main-actor `viewContext`; the `SyncEngine` reads and writes on its own background contexts.
 
 ## Gotchas
 
-* API requests currently carry no authentication; the old Basic Auth was removed and JWT login (access + refresh tokens) is planned.
+* API requests currently carry no authentication; the old Basic Auth was removed and JWT login (access + refresh tokens) is planned; a 401 will need handling in `SyncEngine`.
   Never put credentials or tokens in source; tokens belong in the Keychain.
 * Background tracking needs only "While Using" authorization because of the background activity session; iOS shows the location indicator while it runs.
   Simulator tests cover it, but real background behaviour (suspension, energy) should still be checked on a device.

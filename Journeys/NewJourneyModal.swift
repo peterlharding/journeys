@@ -6,14 +6,13 @@
 //
 import SwiftUI
 
-/// Sheet to create a journey; it becomes the current journey only once the API has stored it.
+/// Sheet to create a journey. It is saved on the phone and becomes current at once, online or not;
+/// the sync engine uploads it.
 struct NewJourneyModal: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var journeyName: String = ""
     @State private var journeyNotes: String = ""
-    @State private var isSaving = false
-    @State private var errorMessage: String?
 
     var locationManager: LocationManager
 
@@ -27,16 +26,7 @@ struct NewJourneyModal: View {
                 TextField("Journey Name", text: $journeyName)
                     .accessibilityIdentifier("journeyName")
                 TextField("Notes", text: $journeyNotes)
-
-                if let errorMessage {
-                    Section {
-                        Label(errorMessage, systemImage: "exclamationmark.triangle")
-                            .foregroundStyle(.red)
-                            .accessibilityIdentifier("saveError")
-                    }
-                }
             }
-            .disabled(isSaving)
             .navigationTitle("New Journey")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -44,28 +34,12 @@ struct NewJourneyModal: View {
                     Button("Cancel") { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    if isSaving {
-                        ProgressView()
-                    } else {
-                        Button("Save", action: save)
-                            .disabled(trimmedName.isEmpty)
+                    Button("Save") {
+                        locationManager.createJourney(name: trimmedName, notes: journeyNotes)
+                        dismiss()
                     }
+                    .disabled(trimmedName.isEmpty)
                 }
-            }
-        }
-        .interactiveDismissDisabled(isSaving)
-    }
-
-    private func save() {
-        isSaving = true
-        errorMessage = nil
-        Task {
-            do {
-                try await locationManager.createJourney(name: trimmedName, notes: journeyNotes)
-                dismiss()
-            } catch {
-                errorMessage = "Journey not saved. \(error.localizedDescription)"
-                isSaving = false
             }
         }
     }

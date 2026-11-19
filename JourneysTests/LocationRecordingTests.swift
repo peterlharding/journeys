@@ -19,29 +19,96 @@ final class LocationRecordingTests: XCTestCase {
         manager.locationManager(CLLocationManager(), didUpdateLocations: [fix])
     }
 
-    /// Core Location can hand back the same cached fix again (e.g. two quick "Check Location" taps).
-    /// It must only be recorded (and posted) once.
-    func testSameFixDeliveredTwiceIsRecordedOnce() {
+    // MARK: - Check Location
+
+    /// iOS can deliver more than one fix for a single request (17 s apart in the simulator);
+    /// one tap of Check Location records exactly one.
+    func testCheckLocationRecordsOneFixPerTap() {
         let manager = makeManager()
-        let fix = makeFix(at: Date(timeIntervalSince1970: 1_800_000_000))
+        let now = Date.now
+        let first = makeFix(at: now)
 
-        deliver(fix, to: manager)
-        deliver(fix, to: manager)
+        manager.startCheckLocation()
+        deliver(first, to: manager)
+        deliver(makeFix(latitude: -33.8689, at: now.addingTimeInterval(17)), to: manager)
 
-        XCTAssertEqual(recorded(by: manager).count, 1)
+        XCTAssertEqual(recorded(by: manager).map(\.recordedAt), [first.timestamp])
     }
 
-    /// Distinct fixes are all recorded, even if they share a timestamp, and each has its own identity.
-    func testDistinctFixesAreAllRecordedWithUniqueIDs() {
+    /// Fixes that arrive when nobody asked for one are not recorded.
+    func testFixesWithoutATapAreIgnored() {
         let manager = makeManager()
-        let time = Date(timeIntervalSince1970: 1_800_000_000)
 
-        deliver(makeFix(at: time), to: manager)
-        deliver(makeFix(latitude: -33.8700, at: time), to: manager)
-        deliver(makeFix(at: time.addingTimeInterval(1)), to: manager)
+        deliver(makeFix(at: .now), to: manager)
+
+        XCTAssertEqual(recorded(by: manager).count, 0)
+    }
+
+    /// A cached fix from before the tap is skipped; the first fresh one is recorded.
+    func testCheckLocationSkipsStaleCachedFix() {
+        let manager = makeManager()
+        let fresh = makeFix(latitude: -33.8700, at: .now)
+
+        manager.startCheckLocation()
+        deliver(makeFix(at: .now.addingTimeInterval(-30)), to: manager)
+        deliver(fresh, to: manager)
+
+        XCTAssertEqual(recorded(by: manager).map(\.recordedAt), [fresh.timestamp])
+    }
+
+    /// When only an older fix arrives (the simulator sends a fixed location once, 13.6 s old in a test run),
+    /// it is recorded after a short wait rather than nothing at all.
+    func testCheckLocationFallsBackToARecentOlderFix() async {
+        let manager = makeManager()
+        manager.checkLocationGrace = .milliseconds(100)
+        let older = makeFix(at: .now.addingTimeInterval(-14))
+
+        manager.startCheckLocation()
+        deliver(older, to: manager)
+        XCTAssertEqual(recorded(by: manager).count, 0, "A fresh fix may still come")
+
+        await waitUntil { self.recorded(by: manager).count == 1 }
+        XCTAssertEqual(recorded(by: manager).map(\.recordedAt), [older.timestamp])
+    }
+
+    /// A fix older than two minutes is not the current location; it is never recorded.
+    func testCheckLocationNeverRecordsAVeryOldFix() async throws {
+        let manager = makeManager()
+        manager.checkLocationGrace = .milliseconds(100)
+
+        manager.startCheckLocation()
+        deliver(makeFix(at: .now.addingTimeInterval(-180)), to: manager)
+        try await Task.sleep(for: .milliseconds(400))
+
+        XCTAssertEqual(recorded(by: manager).count, 0)
+    }
+
+    /// Each tap records its own fix, with its own identity.
+    func testEachTapRecordsItsOwnFix() {
+        let manager = makeManager()
+        let now = Date.now
+
+        for offset in 0..<3 {
+            manager.startCheckLocation()
+            deliver(makeFix(latitude: -33.8688 - Double(offset) / 1000, at: now.addingTimeInterval(Double(offset))),
+                    to: manager)
+        }
 
         XCTAssertEqual(recorded(by: manager).count, 3)
         XCTAssertEqual(Set(recorded(by: manager).map(\.id)).count, 3)
+    }
+
+    /// Two quick taps can be answered with the same cached fix; it is recorded once.
+    func testSameFixForTwoTapsIsRecordedOnce() {
+        let manager = makeManager()
+        let fix = makeFix(at: .now)
+
+        manager.startCheckLocation()
+        deliver(fix, to: manager)
+        manager.startCheckLocation()
+        deliver(fix, to: manager)
+
+        XCTAssertEqual(recorded(by: manager).count, 1)
     }
 
     // MARK: - Tracker

@@ -23,8 +23,14 @@ class TrackerUITestCase: XCTestCase {
         return Int(label.prefix(while: \.isNumber)) ?? -1
     }
 
+    /// Where nothing listens: UI tests never upload to the real API unless a test points the app elsewhere.
+    static let unreachableAPI = "http://127.0.0.1:9"
+
     override func setUp() {
         continueAfterFailure = false
+        if app.launchEnvironment["API_BASE_URL"] == nil {
+            app.launchEnvironment["API_BASE_URL"] = Self.unreachableAPI
+        }
         app.launch()
         allowLocationPermissionIfPrompted()
     }
@@ -43,6 +49,15 @@ class TrackerUITestCase: XCTestCase {
         attachment.lifetime = .keepAlways
         add(attachment)
         print(text)
+    }
+
+    func createJourney(named name: String) {
+        app.buttons["New Journey"].tap()
+        let field = app.textFields["journeyName"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        field.tap()
+        field.typeText(name)
+        app.buttons["Save"].tap()
     }
 
     private func allowLocationPermissionIfPrompted() {
@@ -108,32 +123,21 @@ final class StationaryTrackerUITests: TrackerUITestCase {
 
 final class JourneyUITests: TrackerUITestCase {
 
-    /// Points the app at an API path that does not exist, so the server rejects every request.
-    override func setUp() {
-        app.launchEnvironment["API_BASE_URL"] = "https://mongo-api.performiq.com/does-not-exist"
-        super.setUp()
-    }
-
-    /// A journey the server rejects is not made current, and the sheet stays open with an error.
-    func testRejectedJourneyIsNotSaved() throws {
+    /// With the API unreachable, a new journey is still saved and becomes current at once,
+    /// and the status line says it is waiting to upload.
+    func testJourneyIsCreatedOffline() throws {
         XCTAssertTrue(app.staticTexts["No current journey"].waitForExistence(timeout: 10))
-        app.buttons["New Journey"].tap()
+        createJourney(named: "Offline trip")
 
-        let name = app.textFields["journeyName"]
-        XCTAssertTrue(name.waitForExistence(timeout: 5))
-        name.tap()
-        name.typeText("Rejected trip")
-        app.buttons["Save"].tap()
-
-        let error = app.staticTexts["saveError"]
-        XCTAssertTrue(error.waitForExistence(timeout: 15), "Expected an error message in the sheet")
+        XCTAssertTrue(app.staticTexts["Current Journey: Offline trip"].waitForExistence(timeout: 5))
+        let status = app.staticTexts["syncStatus"]
+        XCTAssertTrue(status.waitForExistence(timeout: 5))
+        XCTAssertEqual(status.label, "1 journey waiting")
+        XCTAssertTrue(app.buttons["Sync now"].exists)
         let screenshot = XCTAttachment(screenshot: app.screenshot())
-        screenshot.name = "Journey save rejected"
+        screenshot.name = "Journey created offline"
         screenshot.lifetime = .keepAlways
         add(screenshot)
-
-        app.buttons["Cancel"].tap()
-        XCTAssertTrue(app.staticTexts["No current journey"].waitForExistence(timeout: 5))
     }
 }
 
@@ -183,5 +187,70 @@ final class PersistenceUITests: TrackerUITestCase {
         screenshot.name = "After relaunch"
         screenshot.lifetime = .keepAlways
         add(screenshot)
+    }
+}
+
+/// Records offline, then relaunches against the mock /sync server (scripts/mock_sync_server.py,
+/// started by scripts/run-tests.sh) and checks everything is uploaded once.
+final class SyncUITests: TrackerUITestCase {
+    static let mockAPI = URL(string: "http://127.0.0.1:8765")!
+
+    override func setUp() {
+        mock("POST", "reset")
+        super.setUp()
+    }
+
+    func testRecordsMadeOfflineAreUploadedWhenTheServerIsReachable() throws {
+        createJourney(named: "Synced trip")
+        XCTAssertTrue(app.staticTexts["Current Journey: Synced trip"].waitForExistence(timeout: 5))
+        app.buttons["Check Location"].tap()
+        XCTAssertTrue(records.firstMatch.waitForExistence(timeout: 15))
+
+        let status = app.staticTexts["syncStatus"]
+        XCTAssertTrue(waitForLabel(of: status, toBe: "1 journey and 1 waypoint waiting", timeout: 15),
+                      "Got \(status.label)")
+        XCTAssertEqual(mockState()["requests"] as? Int, 0)
+
+        // Relaunch with the server reachable: the app uploads on becoming active.
+        app.terminate()
+        app.launchEnvironment["API_BASE_URL"] = Self.mockAPI.absoluteString
+        app.launch()
+
+        XCTAssertTrue(waitForLabel(of: app.staticTexts["syncStatus"], toBe: "All synced", timeout: 20),
+                      "Got \(app.staticTexts["syncStatus"].label)")
+        let state = mockState()
+        XCTAssertEqual((state["journeys"] as? [String])?.count, 1)
+        XCTAssertEqual((state["waypoints"] as? [String])?.count, 1)
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "All synced"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
+    private func waitForLabel(of element: XCUIElement, toBe label: String, timeout: TimeInterval) -> Bool {
+        let predicate = NSPredicate(format: "label == %@", label)
+        return XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: predicate, object: element)],
+                              timeout: timeout) == .completed
+    }
+
+    private func mockState() -> [String: Any] {
+        let data = mock("GET", "state")
+        return (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+    }
+
+    @discardableResult
+    private func mock(_ method: String, _ path: String) -> Data {
+        var request = URLRequest(url: Self.mockAPI.appending(path: path))
+        request.httpMethod = method
+        var result = Data()
+        let done = expectation(description: "\(method) /\(path)")
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            XCTAssertNil(error, "Is the mock server running? \(String(describing: error))")
+            XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+            result = data ?? Data()
+            done.fulfill()
+        }.resume()
+        wait(for: [done], timeout: 10)
+        return result
     }
 }

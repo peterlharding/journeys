@@ -2,8 +2,8 @@
 //  JourneyStorageTests.swift
 //  JourneysTests
 //
-//  How LocationManager uses the store: creating journeys, saving and uploading fixes,
-//  and carrying over the current journey saved by versions before 1.2.0.
+//  How LocationManager uses the store: creating journeys offline, saving fixes and telling the
+//  sync engine, and carrying over the current journey saved by versions before 1.2.0.
 //
 
 import CoreLocation
@@ -14,84 +14,61 @@ import XCTest
 final class JourneyStorageTests: XCTestCase {
 
     override func setUp() {
-        StubURLProtocol.status = 200
-        StubURLProtocol.lastRequest = nil
+        StubURLProtocol.reset()
     }
 
-    func testCreatedJourneyIsSavedAndBecomesCurrent() async throws {
+    /// A new journey is saved and becomes current at once, with no network involved.
+    func testCreatedJourneyIsSavedPendingAndBecomesCurrent() throws {
         let store = Store.inMemory()
         let defaults = makeTestDefaults()
         let manager = makeManager(store: store, defaults: defaults)
 
-        try await manager.createJourney(name: "Commute", notes: "Bus")
+        manager.createJourney(name: "Commute", notes: "Bus")
 
         let journey = try XCTUnwrap(manager.currentJourney)
         XCTAssertEqual(journey.name, "Commute")
-        XCTAssertEqual(journey.syncState, .synced)
+        XCTAssertEqual(journey.notes, "Bus")
+        XCTAssertEqual(journey.syncState, .pending)
         XCTAssertEqual(store.journey(id: journey.id), journey)
+        XCTAssertTrue(StubURLProtocol.requests.isEmpty)
 
         // A relaunch picks the same journey up again.
         let relaunched = makeManager(store: store, defaults: defaults)
         XCTAssertEqual(relaunched.currentJourney?.id, journey.id)
     }
 
-    func testRejectedJourneyIsNotSaved() async {
+    /// Saved journeys and fixes are handed to the sync engine, which waits for Wi-Fi to upload them.
+    func testSavedRecordsAreQueuedForSync() async throws {
         let store = Store.inMemory()
-        let manager = makeManager(store: store)
-        StubURLProtocol.status = 404
+        let engine = SyncEngine(store: store, api: makeStubAPI(), network: FakeNetwork(wifi: false),
+                                defaults: makeTestDefaults(), debounce: .zero)
+        let manager = makeManager(store: store, syncEngine: engine)
 
-        do {
-            try await manager.createJourney(name: "Commute", notes: "")
-            XCTFail("Creating the journey should fail")
-        } catch {}
-
-        XCTAssertNil(manager.currentJourney)
-        XCTAssertEqual((try? store.viewContext.fetch(Journey.fetchRequest()))?.count, 0)
-    }
-
-    /// A tracked fix is saved to the current journey and marked synced once the API accepts it.
-    func testTrackedFixIsSavedThenMarkedSynced() async throws {
-        let store = Store.inMemory()
-        let manager = makeManager(store: store)
-        try await manager.createJourney(name: "Commute", notes: "")
-        let journey = try XCTUnwrap(manager.currentJourney)
-
+        manager.createJourney(name: "Commute", notes: "")
         manager.trackerReceived(makeFix(at: .now))
 
-        let waypoint = try XCTUnwrap(store.waypoints(of: journey).first)
+        let waypoint = try XCTUnwrap(store.waypoints(of: manager.currentJourney).first)
         XCTAssertEqual(waypoint.source, .tracker)
-        await waitUntil { waypoint.syncState == .synced }
-        XCTAssertEqual(StubURLProtocol.lastRequest?.url?.path(), "/waypoints")
-    }
-
-    /// When the upload fails, the fix is still saved, pending, with the error, ready for the sync engine.
-    func testFixIsKeptWhenUploadFails() async throws {
-        let store = Store.inMemory()
-        let manager = makeManager(store: store)
-        try await manager.createJourney(name: "Commute", notes: "")
-        let journey = try XCTUnwrap(manager.currentJourney)
-        StubURLProtocol.status = 502
-
-        manager.trackerReceived(makeFix(at: .now))
-
-        let waypoint = try XCTUnwrap(store.waypoints(of: journey).first)
-        await waitUntil { waypoint.syncError != nil }
         XCTAssertEqual(waypoint.syncState, .pending)
-        XCTAssertEqual(waypoint.syncError, APIError.unexpectedStatus(502).localizedDescription)
+        XCTAssertEqual(engine.pendingJourneys, 1)
+        XCTAssertEqual(engine.pendingWaypoints, 1)
+        await waitUntil { engine.status == .waitingForWiFi }
+        XCTAssertTrue(StubURLProtocol.requests.isEmpty)
     }
 
-    /// A Check Location fix taken with no current journey is saved but never uploaded.
-    func testFixWithoutJourneyIsSavedButNotUploaded() async throws {
+    /// A Check Location fix taken with no current journey is saved but never queued for upload.
+    func testFixWithoutJourneyIsSavedButNotQueued() throws {
         let store = Store.inMemory()
-        let manager = makeManager(store: store)
+        let engine = SyncEngine(store: store, api: makeStubAPI(), network: FakeNetwork(wifi: true),
+                                defaults: makeTestDefaults())
+        let manager = makeManager(store: store, syncEngine: engine)
 
+        manager.startCheckLocation()
         manager.locationManager(CLLocationManager(), didUpdateLocations: [makeFix(at: .now)])
 
         let waypoint = try XCTUnwrap(store.waypoints(of: nil).first)
         XCTAssertEqual(waypoint.source, .checkLocation)
-        try await Task.sleep(for: .milliseconds(100))
-        XCTAssertNil(StubURLProtocol.lastRequest)
-        XCTAssertEqual(waypoint.syncState, .pending)
+        XCTAssertEqual(engine.pendingCount, 0)
     }
 
     /// The current journey saved as JSON by versions before 1.2.0 is moved into the store, once.

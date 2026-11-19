@@ -22,27 +22,18 @@ For the time being the app keeps using the MongoDB API (mongo-api.performiq.com)
 * Migration from Mongo must handle legacy journeys missing `ref`/`created`, detached waypoints, and timestamps the API converted to Melbourne local time.
 * Security issues found in `fastapi/mongo-api` (mongo-api.performiq.com), to fix or retire with it: `GET /api-credentials` returns all `ApplicationUser` records unauthenticated (`app/routes/test.py:37`); journeys/waypoints endpoints have no auth; `/v3/authenticate` reportedly never checks the Basic password and logs passwords; the MongoDB password is committed in `app/CONFIG.py` (private repo).
 
-## Multiple location records per minute
+## Multiple location records (cause found 2026-11-20)
 
-PLH sees more than one location record for some minutes while the tracker is running.
-Not reproduced in the simulator on 2026-11-19: with a fixed simulated location and the app in the foreground, the UI test then in place recorded exactly one location per minute over 3 minutes.
+PLH saw more than one location record for some minutes, and once three records with the same timestamp.
+Causes found and fixed, oldest first:
 
-Still to establish:
+* The same cached fix recorded and posted twice; `LocationManager.record` ignores a fix identical to the last one.
+* `LocationManager` / `TimerManager` recreated by `ContentView`, leaving leaked timers behind; replaced by `CLLocationUpdate.liveUpdates` with no Timer.
+* A retried upload stored a second copy on the server (`POST /waypoints` and `POST /journeys` are not idempotent); uploads now go through `POST /sync`, which stores each record once by the phone's id.
+* One Check Location tap recorded every fix iOS delivered for the request, and iOS can deliver more than one (two, 17 s apart, in the simulator on 2026-11-20).
+  A tap now records only the first fresh fix (`LocationRecordingTests`, `SyncUITests`).
 
-* Whether the duplicates appear in the in-app list, in the server's `/waypoints` data, or both.
-* How far apart the duplicate timestamps are (identical, or seconds apart).
-* Conditions: real device, moving or stationary, app in foreground or background.
-
-Candidate causes:
-
-* `requestLocation()` delivering more than one fix per request on a real device.
-* (Fixed since) The same cached fix being recorded and posted twice; `LocationManager.record` now ignores a fix identical to the last one (`LocationRecordingTests`).
-* (Fixed since) `LocationManager` / `TimerManager` were `@ObservedObject` defaults in `ContentView` and could be recreated, leaving leaked timers behind.
-
-The tracker has since been reworked (`CLLocationUpdate.liveUpdates`, one record per minute while moving, no Timer), so re-check on a device whether duplicates still occur before investigating further.
-
-On 2026-11-19 PLH saw three records with the same timestamp (15:19:48) after tapping Start Tracker on an iPhone 16 Pro Max.
-A build with diagnostic logging then recorded exactly one fix per minute, all from the tracker, with no duplicates, over about 6 minutes; the duplicates have not been reproduced since.
+Still worth watching on the device: the server may hold duplicates from before these fixes (`bin/chk_waypoints.py` and `bin/ls_waypoints.py` in mongo-api can find them).
 
 ## Tracker behaviour on a real device (2026-11-19)
 

@@ -150,6 +150,15 @@ Each phase ends with every test passing and is checked on the phone before the n
    The background processing task and the Journeys screen.
    Phone check: record with Wi-Fi off, lock the phone, turn Wi-Fi on, and confirm the upload happens without opening the app.
 
+## Progress
+
+* Phase 1 (1.2.0): done 2026-11-20.
+* Phase 2: done 2026-11-20; `POST /sync` is live on vega (mongo-api `devel`, `doc/SYNC.md` there), and NGINX now passes the API's own status codes through.
+* Phase 3 (1.3.0): built 2026-11-20.
+  Building it showed that one Check Location tap could record two fixes, because iOS can deliver more than one per request.
+  A tap now records exactly one fix: it starts continuous updates and records the first fresh fix (10 s old or less), or, if none comes within 5 s, the newest fix under 2 minutes old (iOS may only ever send an older fix indoors or in the simulator), then stops.
+  The UI test uses `scripts/mock_sync_server.py`, which `scripts/run-tests.sh` starts on port 8765.
+
 ## Open questions
 
 * How mongo-api is deployed and restarted on the server, so phase 2 can be released and the outage seen today can be avoided.

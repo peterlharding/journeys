@@ -148,18 +148,6 @@ final class Store {
         return waypoint
     }
 
-    /// Records the outcome of an upload: synced, or still pending with the error.
-    func markUploaded(_ waypoint: Waypoint, error: Error?) {
-        if let error {
-            waypoint.syncError = error.localizedDescription
-        } else {
-            waypoint.syncState = .synced
-            waypoint.syncedAt = .now
-            waypoint.syncError = nil
-        }
-        save()
-    }
-
     func save() {
         guard viewContext.hasChanges else { return }
         do {

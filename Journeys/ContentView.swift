@@ -28,7 +28,8 @@ struct CheckboxToggleStyle: ToggleStyle {
 // ---------------------------------------------------------------------------
 
 struct ContentView: View {
-    @StateObject private var locationManager = LocationManager()
+    @EnvironmentObject private var locationManager: LocationManager
+    @EnvironmentObject private var syncEngine: SyncEngine
 
     @State private var isModalPresented: Bool = false
     @State private var isAboutPresented = false
@@ -106,6 +107,8 @@ struct ContentView: View {
                     }
                     .padding()
                 }
+
+                SyncStatusView(syncEngine: syncEngine)
 
                 Toggle(isOn: $showLocations) {
                     Text("Show Locations")
@@ -214,6 +217,9 @@ struct RecordedLocationsView: View {
 }
 
 #Preview {
+    let store = Store.inMemory()
     ContentView()
-        .environment(\.managedObjectContext, Store.inMemory().viewContext)
+        .environment(\.managedObjectContext, store.viewContext)
+        .environmentObject(LocationManager(store: store))
+        .environmentObject(SyncEngine(store: store, api: .shared, network: NetworkMonitor()))
 }

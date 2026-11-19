@@ -27,16 +27,29 @@ func makeTestDefaults() -> UserDefaults {
     return defaults
 }
 
-/// A location manager on an empty in-memory store, a stubbed API and its own defaults.
+/// A location manager on an empty in-memory store, with its own defaults.
 @MainActor
-func makeManager(store: Store? = nil, defaults: UserDefaults? = nil) -> LocationManager {
-    LocationManager(store: store ?? .inMemory(), api: makeStubAPI(), defaults: defaults ?? makeTestDefaults())
+func makeManager(store: Store? = nil, syncEngine: SyncEngine? = nil, defaults: UserDefaults? = nil) -> LocationManager {
+    LocationManager(store: store ?? .inMemory(), syncEngine: syncEngine, defaults: defaults ?? makeTestDefaults())
 }
 
-/// Waits, without blocking the main actor, until `condition` holds or a second has passed.
+/// A network the test switches between Wi-Fi (automatic sync allowed) and mobile data.
+@MainActor
+final class FakeNetwork: NetworkStatusProviding {
+    var allowsAutomaticSync: Bool {
+        didSet { onChange?() }
+    }
+    var onChange: (() -> Void)?
+
+    init(wifi: Bool) {
+        allowsAutomaticSync = wifi
+    }
+}
+
+/// Waits, without blocking the main actor, until `condition` holds or two seconds have passed.
 @MainActor
 func waitUntil(_ condition: () -> Bool, file: StaticString = #filePath, line: UInt = #line) async {
-    for _ in 0..<100 where !condition() {
+    for _ in 0..<200 where !condition() {
         try? await Task.sleep(for: .milliseconds(10))
     }
     XCTAssertTrue(condition(), "Timed out waiting", file: file, line: line)

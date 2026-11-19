@@ -32,7 +32,8 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     @Published private(set) var isTracking: Bool = false
 
     let store: Store
-    private let api: APIClient
+    /// Told about every saved record, so it can upload them; nil in tests that only check recording.
+    private let syncEngine: SyncEngine?
     private let defaults: UserDefaults
 
     private var trackingTask: Task<Void, Never>?
@@ -41,12 +42,23 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     private var lastTracked: CLLocation?
     /// The last fix recorded, to ignore Core Location handing the same fix over again.
     private var lastRecorded: CLLocation?
+    /// Set by a Check Location tap until its fix is recorded: only the first fresh fix is wanted.
+    private var awaitingCheckLocation = false
+    /// Stops a Check Location that never gets a usable fix, so location updates do not run on.
+    private var checkLocationTimeout: Task<Void, Never>?
+    static let checkLocationTimeLimit: Duration = .seconds(30)
+    /// The newest older-than-fresh fix seen since the tap, recorded if no fresh one arrives in time.
+    private var checkLocationFallback: CLLocation?
+    private var checkLocationFallbackTask: Task<Void, Never>?
+    /// How long to wait for a fresh fix before settling for the fallback (tests shorten it).
+    var checkLocationGrace: Duration = .seconds(5)
+    /// A fix older than this is not the current location and is never recorded by Check Location.
+    static let maxCheckLocationFixAge: TimeInterval = 120
 
-    /// Nil arguments mean the app's own store, API and defaults; tests pass an in-memory store,
-    /// a stubbed API and their own defaults.
-    init(store: Store? = nil, api: APIClient = .shared, defaults: UserDefaults = .standard) {
+    /// A nil store means the app's own; tests pass an in-memory store and their own defaults.
+    init(store: Store? = nil, syncEngine: SyncEngine? = nil, defaults: UserDefaults = .standard) {
         self.store = store ?? .shared
-        self.api = api
+        self.syncEngine = syncEngine
         self.defaults = defaults
         super.init()
         locationManager.delegate = self
@@ -57,8 +69,62 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     }
 
     /// Records the current location once, whether or not tracking is running.
+    ///
+    /// `requestLocation()` was not used: it can answer with a stale cached fix, take 15 s or more to
+    /// produce a fresh one, and deliver more than one fix for a single request. Continuous updates give
+    /// a fresh fix within a second or two; they stop as soon as it is recorded.
     func requestLocation() {
-        locationManager.requestLocation()
+        startCheckLocation()
+        locationManager.startUpdatingLocation()
+        checkLocationTimeout?.cancel()
+        checkLocationTimeout = Task { [weak self] in
+            try? await Task.sleep(for: Self.checkLocationTimeLimit)
+            guard !Task.isCancelled else { return }
+            self?.finishCheckLocation()
+        }
+    }
+
+    private func finishCheckLocation() {
+        awaitingCheckLocation = false
+        checkLocationTimeout?.cancel()
+        checkLocationTimeout = nil
+        checkLocationFallbackTask?.cancel()
+        checkLocationFallbackTask = nil
+        checkLocationFallback = nil
+        locationManager.stopUpdatingLocation()
+    }
+
+    /// Marks a Check Location as asked for, so its fix is recorded (tests call this directly).
+    func startCheckLocation() {
+        checkLocationFallbackTask?.cancel()
+        checkLocationFallbackTask = nil
+        checkLocationFallback = nil
+        awaitingCheckLocation = true
+    }
+
+    /// Records one fix per Check Location tap: the first fresh one (`maxTrackedFixAge`) if it comes,
+    /// otherwise, after `checkLocationGrace`, the newest fix seen that is under two minutes old.
+    /// Indoors, or in the simulator with a fixed location, iOS may only ever send an older fix.
+    private func checkLocationReceived(_ location: CLLocation, now: Date = .now) {
+        guard awaitingCheckLocation else { return }
+        let age = now.timeIntervalSince(location.timestamp)
+        if age <= Self.maxTrackedFixAge {
+            finishCheckLocation()
+            record(location, source: .checkLocation)
+            return
+        }
+        guard age <= Self.maxCheckLocationFixAge else { return }
+        if let fallback = checkLocationFallback, fallback.timestamp >= location.timestamp { return }
+        checkLocationFallback = location
+        guard checkLocationFallbackTask == nil else { return }
+        checkLocationFallbackTask = Task { [weak self, checkLocationGrace] in
+            try? await Task.sleep(for: checkLocationGrace)
+            guard !Task.isCancelled, let self, self.awaitingCheckLocation,
+                  let fallback = self.checkLocationFallback,
+                  Date.now.timeIntervalSince(fallback.timestamp) <= Self.maxCheckLocationFixAge else { return }
+            self.finishCheckLocation()
+            self.record(fallback, source: .checkLocation)
+        }
     }
 
     /// Starts recording the location while the device is moving, including in the background.
@@ -110,7 +176,7 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         record(location, source: .tracker)
     }
 
-    /// Saves a fix to the current journey (or with no journey), then posts it once.
+    /// Saves a fix to the current journey (or with no journey); the sync engine uploads it later.
     /// Core Location can deliver the same cached fix more than once; repeats are ignored.
     private func record(_ location: CLLocation, source: Waypoint.Source) {
         if let lastRecorded, location.isSameFix(as: lastRecorded) {
@@ -119,7 +185,7 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         lastRecorded = location
         let waypoint = store.addWaypoint(location, source: source, journey: currentJourney)
         if waypoint.journey != nil {
-            upload(waypoint)
+            syncEngine?.recordSaved()
         }
     }
 
@@ -136,7 +202,7 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     nonisolated func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard let location = locations.last else { return }
         MainActor.assumeIsolated {
-            record(location, source: .checkLocation)
+            checkLocationReceived(location)
         }
     }
 
@@ -144,42 +210,13 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         print("Failed to find user's location: \(error.localizedDescription)")
     }
 
-    /// Stores a new journey via the API, then saves it and makes it the current journey.
-    /// Throws, leaving the current journey unchanged, if the API does not accept it.
-    func createJourney(name: String, notes: String) async throws {
-        let payload = JourneyData(id: UUID(), name: name, notes: notes)
-        try await api.post("journeys", body: payload)
-        let journey = store.addJourney(id: payload.id, name: name, notes: notes, syncState: .synced)
+    /// Saves a new journey and makes it the current journey at once, online or not;
+    /// the sync engine uploads it later.
+    func createJourney(name: String, notes: String) {
+        let journey = store.addJourney(name: name, notes: notes, syncState: .pending)
         setCurrentJourney(journey)
+        syncEngine?.recordSaved()
     }
-
-    /// Posts a waypoint once and records the outcome on it. Failed uploads stay pending;
-    /// retrying them is the sync engine's job (docs/OFFLINE_SYNC.md, phase 3).
-    private func upload(_ waypoint: Waypoint) {
-        guard let journey = waypoint.journey else { return }
-        let payload = LocationData(
-            latitude: waypoint.latitude,
-            longitude: waypoint.longitude,
-            timestamp: Self.timestampFormatter.string(from: waypoint.recordedAt),
-            journeyId: journey.id.uuidString
-        )
-        Task {
-            do {
-                try await api.post("waypoints", body: payload)
-                store.markUploaded(waypoint, error: nil)
-            } catch {
-                print("Failed to post location data: \(error.localizedDescription)")
-                store.markUploaded(waypoint, error: error)
-            }
-        }
-    }
-
-    /// ISO 8601 with fractional seconds, as the API expects.
-    private static let timestampFormatter: ISO8601DateFormatter = {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return formatter
-    }()
 
     // MARK: - Current journey
 

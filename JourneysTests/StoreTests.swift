@@ -99,20 +99,4 @@ final class StoreTests: XCTestCase {
         XCTAssertEqual(store.waypoints(of: second).count, 1)
         XCTAssertEqual(store.waypoints(of: nil).count, 0)
     }
-
-    /// Recording the upload outcome: success marks the waypoint synced, failure keeps it pending with the error.
-    func testUploadOutcomeIsRecorded() {
-        let store = Store.inMemory()
-        let journey = store.addJourney(name: "Trip", notes: "", syncState: .synced)
-        let uploaded = store.addWaypoint(makeFix(at: .now), source: .tracker, journey: journey)
-        let failed = store.addWaypoint(makeFix(at: .now.addingTimeInterval(60)), source: .tracker, journey: journey)
-
-        store.markUploaded(uploaded, error: nil)
-        store.markUploaded(failed, error: APIError.unexpectedStatus(302))
-
-        XCTAssertEqual(uploaded.syncState, .synced)
-        XCTAssertNotNil(uploaded.syncedAt)
-        XCTAssertEqual(failed.syncState, .pending)
-        XCTAssertEqual(failed.syncError, APIError.unexpectedStatus(302).localizedDescription)
-    }
 }

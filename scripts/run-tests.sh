@@ -37,6 +37,11 @@ run_tests() {
 
 status=0
 
+# The mock /sync server for SyncUITests; stopped when the script exits.
+python3 scripts/mock_sync_server.py 8765 2>/dev/null &
+MOCK_PID=$!
+trap 'kill $MOCK_PID 2>/dev/null' EXIT
+
 # Unit tests first: they take seconds and do not depend on the simulated location.
 xcodebuild test-without-building \
   -project Journeys.xcodeproj -scheme Journeys \
@@ -58,6 +63,7 @@ boot_sim
 xcrun simctl location "$SIM" set -33.8688,151.2093
 run_tests -only-testing:JourneysUITests/StationaryTrackerUITests || status=1
 run_tests -only-testing:JourneysUITests/PersistenceUITests || status=1
+run_tests -only-testing:JourneysUITests/SyncUITests || status=1
 # Journey tests point the app at a failing API path, so they do not write to the real API.
 run_tests -only-testing:JourneysUITests/JourneyUITests || status=1
 run_tests -only-testing:JourneysUITests/AboutUITests || status=1
