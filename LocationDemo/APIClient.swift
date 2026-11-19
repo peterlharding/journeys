@@ -22,21 +22,23 @@ enum APIError: LocalizedError {
 }
 
 final class APIClient: NSObject, URLSessionTaskDelegate {
-    static let shared = APIClient()
-
     /// Production API; the `API_BASE_URL` environment variable overrides it (used by UI tests).
-    let baseURL: URL
+    static let shared = APIClient(
+        baseURL: ProcessInfo.processInfo.environment["API_BASE_URL"].flatMap(URL.init(string:))
+            ?? URL(string: "https://mongo-api.performiq.com")!
+    )
 
-    private lazy var session: URLSession = {
-        let configuration = URLSessionConfiguration.default
+    let baseURL: URL
+    private let configuration: URLSessionConfiguration
+
+    private lazy var session = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
+
+    /// `configuration` is for tests, which stub the network with their own `URLProtocol`.
+    init(baseURL: URL, configuration: URLSessionConfiguration = .default) {
+        self.baseURL = baseURL
         // Fail within 30 s rather than the default 60 s, so a stalled network reports an error promptly.
         configuration.timeoutIntervalForRequest = 30
-        return URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
-    }()
-
-    override init() {
-        let override = ProcessInfo.processInfo.environment["API_BASE_URL"].flatMap(URL.init(string:))
-        baseURL = override ?? URL(string: "https://mongo-api.performiq.com")!
+        self.configuration = configuration
         super.init()
     }
 

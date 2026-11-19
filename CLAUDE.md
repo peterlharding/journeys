@@ -6,7 +6,7 @@ iPhone and iPad only (never macOS, tvOS or visionOS); an app target, a unit test
 ## Commands
 
 * Build (simulator): `xcodebuild -project LocationDemo.xcodeproj -scheme LocationDemo -destination 'generic/platform=iOS Simulator' build`
-* Lint: `swiftlint lint --quiet LocationDemo` (no `.swiftlint.yml` yet, so default rules apply; it currently reports no warnings)
+* Lint: `swiftlint lint --quiet LocationDemo LocationDemoTests LocationDemoUITests` (no `.swiftlint.yml` yet, so default rules apply; it currently reports no warnings)
 * All tests: `scripts/run-tests.sh [simulator-udid]` (about 10 minutes; unit tests first, then UI tests, which wait in real time)
 * Unit tests only: `xcodebuild test -project LocationDemo.xcodeproj -scheme LocationDemo -destination 'id=<simulator-udid>' -only-testing:LocationDemoTests` (seconds)
 * List simulators: `xcrun simctl list devices available`
