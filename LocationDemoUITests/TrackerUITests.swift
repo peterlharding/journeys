@@ -3,7 +3,7 @@
 //  LocationDemoUITests
 //
 //  These tests depend on the simulator's simulated location, which a test cannot set itself.
-//  Run them through scripts/run-ui-tests.sh, which sets a moving route for MovingTrackerUITests
+//  Run them through scripts/run-tests.sh, which sets a moving route for MovingTrackerUITests
 //  and a fixed location for StationaryTrackerUITests.
 //
 
@@ -92,7 +92,12 @@ final class StationaryTrackerUITests: TrackerUITestCase {
         startTracker()
         sleep(2 * 60 + 15)
         logRecords("STATIONARY RECORDS")
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Stationary after first fix"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
 
-        XCTAssertLessThanOrEqual(recordCount, 1)
+        XCTAssertEqual(recordCount, 1)
+        XCTAssertEqual(app.staticTexts["recordCount"].label, "1 location recorded")
     }
 }

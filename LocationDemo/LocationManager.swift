@@ -20,7 +20,7 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     @Published var userLatitude: Double = 0.0
     @Published var userLongitude: Double = 0.0
     @Published var permissionDenied: Bool = false
-    @Published var locations: [CLLocation] = [] // Array to store all locations
+    @Published private(set) var locations: [RecordedLocation] = []
     @Published var journeyGUID: String = "" // Store the current journey GUID
     @Published var currentJourney: JourneyData? // Store the current journey
     @Published private(set) var isTracking: Bool = false
@@ -89,10 +89,15 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
         record(location)
     }
 
+    /// Records a fix and posts it to the current journey.
+    /// Core Location can deliver the same cached fix more than once; repeats are ignored.
     private func record(_ location: CLLocation) {
+        if let last = locations.last?.location, location.isSameFix(as: last) {
+            return
+        }
         userLatitude = location.coordinate.latitude
         userLongitude = location.coordinate.longitude
-        locations.append(location)
+        locations.append(RecordedLocation(location: location))
         if let journey = currentJourney {
             postLocationData(latitude: location.coordinate.latitude,
                              longitude: location.coordinate.longitude,

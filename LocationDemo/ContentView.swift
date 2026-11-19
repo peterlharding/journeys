@@ -63,9 +63,17 @@ struct ContentView: View {
                 if showLocations {
                     Text("Current Location")
                         .font(.largeTitle)
-                    Text("Latitude: \(locationManager.userLatitude)")
-                    Text("Longitude: \(locationManager.userLongitude)")
-                        .padding()
+                    if locationManager.locations.isEmpty {
+                        Text("No location yet")
+                            .foregroundStyle(.secondary)
+                            .padding(.bottom)
+                    } else {
+                        VStack(spacing: 4) {
+                            Text("Latitude: \(locationManager.userLatitude)")
+                            Text("Longitude: \(locationManager.userLongitude)")
+                        }
+                        .padding(.bottom)
+                    }
                 }
 
 //                Button(action: {
@@ -115,12 +123,13 @@ struct ContentView: View {
                 .padding()
 
                 if showLocations {
-                    Text("\(locationManager.locations.count) locations recorded")
+                    Text("^[\(locationManager.locations.count) location](inflect: true) recorded")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .accessibilityIdentifier("recordCount")
                     // Displaying the list of all recorded locations
-                    List(locationManager.locations, id: \.timestamp) { location in
+                    List(locationManager.locations) { recorded in
+                        let location = recorded.location
                         VStack(alignment: .leading) {
                             Text("Latitude: \(location.coordinate.latitude)")
                             Text("Longitude: \(location.coordinate.longitude)")
@@ -138,9 +147,11 @@ struct ContentView: View {
                                     Link("Apple Maps", destination: appleMapsURL)
                                 }
                             }
-
+                            // Keeps each link separately tappable and tinted inside a list row.
+                            .buttonStyle(.borderless)
                         }
                     }
+                    .listStyle(.plain)
                 }
             }
         }

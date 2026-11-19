@@ -15,6 +15,7 @@ Open: which API hosts the endpoints (current Mongo API or api.performiq.com) and
 ## Backend: PostgreSQL and api.performiq.com (on hold)
 
 On hold until PLH has checked out the API repos on this Mac for local development (2026-11-19).
+For the time being the app keeps using the MongoDB API (mongo-api.performiq.com), whose journeys/waypoints endpoints need no auth, so the app works without credentials.
 
 * Direction: move journeys/waypoints from MongoDB to PostgreSQL (`journey` 1-N `waypoint(journey_id FK, recorded_at timestamptz)` ordered by time, replacing the Mongo linked list), and serve them from api.performiq.com.
 * api.performiq.com is NGINX in front of an old FastAPI implementation that needs refactoring to the conventions of recent projects; which repo holds its source, and which project sets the conventions (HSDB `db-api-fastapi`, `base-api`, or a mix), is still to be confirmed.
@@ -24,7 +25,7 @@ On hold until PLH has checked out the API repos on this Mac for local developmen
 ## Multiple location records per minute
 
 PLH sees more than one location record for some minutes while the tracker is running.
-Not reproduced in the simulator on 2026-11-19: with a fixed simulated location and the app in the foreground, `TrackerUITests.testTrackerRecordsOneLocationPerMinute` recorded exactly one location per minute over 3 minutes.
+Not reproduced in the simulator on 2026-11-19: with a fixed simulated location and the app in the foreground, the UI test then in place recorded exactly one location per minute over 3 minutes.
 
 Still to establish:
 
@@ -35,6 +36,7 @@ Still to establish:
 Candidate causes:
 
 * `requestLocation()` delivering more than one fix per request on a real device.
+* (Fixed since) The same cached fix being recorded and posted twice; `LocationManager.record` now ignores a fix identical to the last one (`LocationRecordingTests`).
 * (Fixed since) `LocationManager` / `TimerManager` were `@ObservedObject` defaults in `ContentView` and could be recreated, leaving leaked timers behind.
 
 The tracker has since been reworked (`CLLocationUpdate.liveUpdates`, one record per minute while moving, no Timer), so re-check on a device whether duplicates still occur before investigating further.
