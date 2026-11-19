@@ -48,8 +48,12 @@ A build with diagnostic logging then recorded exactly one fix per minute, all fr
 
 Seen with diagnostic logging on an iPhone 16 Pro Max lying still on a desk:
 
-* `CLLocationUpdate.stationary` stayed false and updates kept arriving every few seconds, so a still device records one fix per minute; "record only while moving" saves less energy on a device than the simulator suggests.
-* The first update after Start Tracker can be a cached fix (24 s old in the test), which is recorded as the journey's first waypoint; consider skipping fixes older than a few seconds.
+* `CLLocationUpdate.stationary` stayed false and updates kept arriving every few seconds, so a still device recorded one fix per minute.
+  Fixed: the tracker now records only after moving 25 m; a still phone's fixes drift by about a metre.
+* The first update after Start Tracker can be a cached fix (24 s and 100 s old in two tests), which was recorded as the journey's first waypoint.
+  Fixed: the tracker skips fixes older than 10 s.
+* Both fixes checked on the device: one record while still for several minutes, a new one after walking, no duplicates.
+* Still open: updates keep arriving every few seconds while still, so the energy saving depends on iOS pausing them; check over a longer still period in the background without a debugger attached.
 
 ## API errors are hidden behind a redirect
 

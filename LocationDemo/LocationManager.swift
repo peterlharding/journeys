@@ -17,6 +17,15 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     /// When the device is stationary, Core Location stops delivering updates, so nothing is recorded.
     static let trackingRecordInterval: TimeInterval = 60
 
+    /// The tracker ignores fixes older than this. The first update after Start Tracker is often
+    /// a cached fix from before tracking began (24 s old in a device test).
+    static let maxTrackedFixAge: TimeInterval = 10
+
+    /// The tracker records a fix only this far (metres) from the last one it recorded, or further
+    /// when the fix is less accurate. iOS does not reliably report a still device as stationary,
+    /// and a still phone's fixes drift by a metre or so.
+    static let minTrackedDistance: CLLocationDistance = 25
+
     @Published var userLatitude: Double = 0.0
     @Published var userLongitude: Double = 0.0
     @Published var permissionDenied: Bool = false
@@ -28,7 +37,7 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     private var trackingTask: Task<Void, Never>?
     /// Keeps the app running in the background while tracking (shows the location indicator).
     private var backgroundSession: CLBackgroundActivitySession?
-    private var lastTrackedAt: Date?
+    private var lastTracked: CLLocation?
 
     override init() {
         super.init()
@@ -48,7 +57,7 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
     func startTracking() {
         guard !isTracking else { return }
         isTracking = true
-        lastTrackedAt = nil
+        lastTracked = nil
         backgroundSession = CLBackgroundActivitySession()
         trackingTask = Task { [weak self] in
             do {
@@ -76,11 +85,20 @@ class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
             return
         }
         guard let location = update.location, !update.stationary else { return }
-        if let lastTrackedAt,
-           location.timestamp.timeIntervalSince(lastTrackedAt) < Self.trackingRecordInterval {
-            return
+        trackerReceived(location)
+    }
+
+    /// Records a fix delivered while tracking: at most once per `trackingRecordInterval`, only after
+    /// moving `minTrackedDistance`, and never a stale cached fix. `now` is injectable for tests.
+    func trackerReceived(_ location: CLLocation, now: Date = .now) {
+        guard now.timeIntervalSince(location.timestamp) <= Self.maxTrackedFixAge else { return }
+        if let lastTracked {
+            guard location.timestamp.timeIntervalSince(lastTracked.timestamp) >= Self.trackingRecordInterval
+            else { return }
+            let threshold = max(Self.minTrackedDistance, location.horizontalAccuracy)
+            guard location.distance(from: lastTracked) >= threshold else { return }
         }
-        lastTrackedAt = location.timestamp
+        lastTracked = location
         record(location)
     }
 
