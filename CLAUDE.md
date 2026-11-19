@@ -15,6 +15,7 @@ Formerly LocationDemo (renamed 2026-11-19, history kept); the old github.com/pet
 ## Layout
 
 * `docs/BACKLOG.md` - known issues and work not yet started
+* `docs/OFFLINE_SYNC.md` - plan for the local store and Wi-Fi sync (phases 1 to 4)
 * `Journeys.xcodeproj/` - Xcode project: app, unit test and UI test targets, and one shared scheme named `Journeys`
 * `Journeys/JourneysApp.swift` - app entry point, shows `ContentView`
 * `Journeys/ContentView.swift` - main screen: About (info) button, current journey, New Journey, Check Location and Start/Stop Tracker buttons, location list
