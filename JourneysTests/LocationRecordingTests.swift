@@ -1,11 +1,11 @@
 //
 //  LocationRecordingTests.swift
-//  LocationDemoTests
+//  JourneysTests
 //
 
 import CoreLocation
 import XCTest
-@testable import LocationDemo
+@testable import Journeys
 
 @MainActor
 final class LocationRecordingTests: XCTestCase {

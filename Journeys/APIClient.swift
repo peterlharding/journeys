@@ -1,6 +1,6 @@
 //
 //  APIClient.swift
-//  LocationDemo
+//  Journeys
 //
 //  Sends JSON to the PerformIQ Mongo API.
 //

@@ -1,6 +1,6 @@
 //
 //  TrackerUITests.swift
-//  LocationDemoUITests
+//  JourneysUITests
 //
 //  These tests depend on the simulator's simulated location, which a test cannot set itself.
 //  Run them through scripts/run-tests.sh, which sets a moving route for MovingTrackerUITests

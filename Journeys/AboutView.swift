@@ -1,6 +1,6 @@
 //
 //  AboutView.swift
-//  LocationDemo
+//  Journeys
 //
 //  Shows the app's version and the API it posts to.
 //
@@ -13,7 +13,7 @@ struct AboutView: View {
     private let info = Bundle.main.infoDictionary ?? [:]
 
     private var appName: String {
-        info["CFBundleDisplayName"] as? String ?? info["CFBundleName"] as? String ?? "LocationDemo"
+        info["CFBundleDisplayName"] as? String ?? info["CFBundleName"] as? String ?? "Journeys"
     }
 
     /// "1.0.0 (1)": the marketing version, then the build number.

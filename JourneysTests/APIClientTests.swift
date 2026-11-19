@@ -1,10 +1,10 @@
 //
 //  APIClientTests.swift
-//  LocationDemoTests
+//  JourneysTests
 //
 
 import XCTest
-@testable import LocationDemo
+@testable import Journeys
 
 /// Answers every request with a fixed HTTP status and records the request it received.
 final class StubURLProtocol: URLProtocol {

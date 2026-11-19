@@ -15,9 +15,9 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "722E3A462CBC789C00765904"
-               BuildableName = "LocationDemo.app"
-               BlueprintName = "LocationDemo"
-               ReferencedContainer = "container:LocationDemo.xcodeproj">
+               BuildableName = "Journeys.app"
+               BlueprintName = "Journeys"
+               ReferencedContainer = "container:Journeys.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
       </BuildActionEntries>
@@ -34,9 +34,9 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "7A2000000000000000000006"
-               BuildableName = "LocationDemoTests.xctest"
-               BlueprintName = "LocationDemoTests"
-               ReferencedContainer = "container:LocationDemo.xcodeproj">
+               BuildableName = "JourneysTests.xctest"
+               BlueprintName = "JourneysTests"
+               ReferencedContainer = "container:Journeys.xcodeproj">
             </BuildableReference>
          </TestableReference>
          <TestableReference
@@ -44,9 +44,9 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "7A1000000000000000000006"
-               BuildableName = "LocationDemoUITests.xctest"
-               BlueprintName = "LocationDemoUITests"
-               ReferencedContainer = "container:LocationDemo.xcodeproj">
+               BuildableName = "JourneysUITests.xctest"
+               BlueprintName = "JourneysUITests"
+               ReferencedContainer = "container:Journeys.xcodeproj">
             </BuildableReference>
          </TestableReference>
       </Testables>
@@ -66,9 +66,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "722E3A462CBC789C00765904"
-            BuildableName = "LocationDemo.app"
-            BlueprintName = "LocationDemo"
-            ReferencedContainer = "container:LocationDemo.xcodeproj">
+            BuildableName = "Journeys.app"
+            BlueprintName = "Journeys"
+            ReferencedContainer = "container:Journeys.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </LaunchAction>
@@ -84,9 +84,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "722E3A462CBC789C00765904"
-            BuildableName = "LocationDemo.app"
-            BlueprintName = "LocationDemo"
-            ReferencedContainer = "container:LocationDemo.xcodeproj">
+            BuildableName = "Journeys.app"
+            BlueprintName = "Journeys"
+            ReferencedContainer = "container:Journeys.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </ProfileAction>

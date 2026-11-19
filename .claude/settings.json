@@ -2,7 +2,7 @@
   "permissions": {
     "allow": [
       "Bash(xcodebuild -list:*)",
-      "Bash(xcodebuild -project LocationDemo.xcodeproj:*)",
+      "Bash(xcodebuild -project Journeys.xcodeproj:*)",
       "Bash(xcrun simctl list:*)",
       "Bash(swiftlint lint:*)"
     ]

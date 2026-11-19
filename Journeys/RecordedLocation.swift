@@ -1,6 +1,6 @@
 //
 //  RecordedLocation.swift
-//  LocationDemo
+//  Journeys
 //
 
 import CoreLocation
