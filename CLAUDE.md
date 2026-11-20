@@ -14,6 +14,7 @@ Formerly LocationDemo (renamed 2026-11-19, history kept); the old github.com/pet
 
 ## Layout
 
+* `CHANGELOG.md` - release history (Keep a Changelog), kept by hand: add to Unreleased with each change, and tag each version `vX.Y.Z`
 * `docs/BACKLOG.md` - known issues and work not yet started
 * `docs/OFFLINE_SYNC.md` - plan for the local store and Wi-Fi sync (phases 1 to 4)
 * `Journeys.xcodeproj/` - Xcode project: app, unit test and UI test targets, and one shared scheme named `Journeys`
