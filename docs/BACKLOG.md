@@ -1,25 +1,12 @@
 # Backlog
 
-## JWT login (access + refresh tokens)
+## Backend: move off mongo-api
 
-Replace the removed Basic Auth with the login design used by the HSDB API (`dsto/hsdb/db-api-fastapi`, `app/routes/auth.py`, `app/auth/refresh.py`): a short-lived access JWT (15 min) sent as `Authorization: Bearer`, plus an opaque refresh token (14 days) stored hashed server-side, rotated on every use, with reuse detection revoking the token family.
+The app signs in to fastapi-api (`https://fast-api.performiq.com`) and uploads there from 1.6.0, with rotating refresh tokens (90 days, reuse detection) and 15-minute access tokens.
+The data already in MongoDB moves with fastapi-api's `scripts/mongo-export-journeys.sh` and `scripts/import_mongo_journeys.py`.
 
-Decided 2026-11-19:
-
-* iOS uses a body-based refresh variant, not the HttpOnly cookie used by browser clients: login and refresh return the refresh token in the JSON body, and refresh accepts `{"refresh_token": ...}` in the body (no `X-Requested-With` needed, since no cookie is involved).
-* The refresh token is stored in the Keychain with "after first unlock" accessibility so background tracking can refresh while the device is locked; the access token stays in memory.
-* The client serialises refreshes (one in flight, others wait), retries a request once after a 401, treats a 401 from refresh as logged out, and keeps the session on network errors and 5xx.
-
-Open: which API hosts the endpoints (current Mongo API or api.performiq.com) and the MongoDB to PostgreSQL migration.
-
-## Backend: PostgreSQL and api.performiq.com (on hold)
-
-On hold until PLH has checked out the API repos on this Mac for local development (2026-11-19).
-For the time being the app keeps using the MongoDB API (mongo-api.performiq.com), whose journeys/waypoints endpoints need no auth, so the app works without credentials.
-
-* Direction: move journeys/waypoints from MongoDB to PostgreSQL (`journey` 1-N `waypoint(journey_id FK, recorded_at timestamptz)` ordered by time, replacing the Mongo linked list), and serve them from api.performiq.com.
-* api.performiq.com is NGINX in front of an old FastAPI implementation that needs refactoring to the conventions of recent projects; which repo holds its source, and which project sets the conventions (HSDB `db-api-fastapi`, `base-api`, or a mix), is still to be confirmed.
-* Migration from Mongo must handle legacy journeys missing `ref`/`created`, detached waypoints, and timestamps the API converted to Melbourne local time.
+* Mongo's times are UTC, including those from before `POST /sync` (checked 2026-11-20 against the trips' known local times, e.g. a Bunnings trip at 23:14 UTC, 10:14 am local); the import keeps them as they are.
+* The phone uploads only to fastapi-api from 1.6.0, so export and import once more after installing it, to catch anything synced to mongo-api after the first export.
 * Security issues found in `fastapi/mongo-api` (mongo-api.performiq.com), to fix or retire with it: `GET /api-credentials` returns all `ApplicationUser` records unauthenticated (`app/routes/test.py:37`); journeys/waypoints endpoints have no auth; `/v3/authenticate` reportedly never checks the Basic password and logs passwords; the MongoDB password is committed in `app/CONFIG.py` (private repo).
 
 ## Multiple location records (cause found 2026-11-20)

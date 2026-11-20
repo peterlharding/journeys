@@ -42,7 +42,8 @@ final class JourneyStorageTests: XCTestCase {
         let store = Store.inMemory()
         let uploader = FakeUploader()
         let engine = SyncEngine(store: store, api: makeStubAPI(), uploader: uploader,
-                                network: FakeNetwork(wifi: false), defaults: makeTestDefaults(), debounce: .zero)
+                                network: FakeNetwork(wifi: false), auth: FakeAuth(), defaults: makeTestDefaults(),
+                                debounce: .zero)
         let manager = makeManager(store: store, syncEngine: engine)
 
         manager.createJourney(name: "Commute", notes: "")
@@ -62,7 +63,7 @@ final class JourneyStorageTests: XCTestCase {
     func testFixWithoutJourneyIsSavedButNotQueued() throws {
         let store = Store.inMemory()
         let engine = SyncEngine(store: store, api: makeStubAPI(), uploader: FakeUploader(),
-                                network: FakeNetwork(wifi: true), defaults: makeTestDefaults())
+                                network: FakeNetwork(wifi: true), auth: FakeAuth(), defaults: makeTestDefaults())
         let manager = makeManager(store: store, syncEngine: engine)
 
         manager.startCheckLocation()

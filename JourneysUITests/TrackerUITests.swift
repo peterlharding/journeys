@@ -31,8 +31,18 @@ class TrackerUITestCase: XCTestCase {
         if app.launchEnvironment["API_BASE_URL"] == nil {
             app.launchEnvironment["API_BASE_URL"] = Self.unreachableAPI
         }
+        // Signed out, whatever an earlier run left in the simulator's Keychain.
+        app.launchEnvironment["RESET_SIGN_IN"] = "1"
         app.launch()
         allowLocationPermissionIfPrompted()
+    }
+
+    /// Keeps a screenshot with the test results, to check how screens look.
+    func attachScreenshot(_ name: String) {
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = name
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
     }
 
     func startTracker() {
@@ -111,10 +121,7 @@ final class StationaryTrackerUITests: TrackerUITestCase {
         startTracker()
         sleep(2 * 60 + 15)
         logRecords("STATIONARY RECORDS")
-        let screenshot = XCTAttachment(screenshot: app.screenshot())
-        screenshot.name = "Stationary after first fix"
-        screenshot.lifetime = .keepAlways
-        add(screenshot)
+        attachScreenshot("Stationary after first fix")
 
         XCTAssertEqual(recordCount, 1)
         XCTAssertEqual(app.staticTexts["recordCount"].label, "1 location recorded")
@@ -134,16 +141,14 @@ final class JourneyUITests: TrackerUITestCase {
         XCTAssertTrue(status.waitForExistence(timeout: 5))
         XCTAssertEqual(status.label, "1 journey waiting")
         XCTAssertTrue(app.buttons["Sync now"].exists)
-        let screenshot = XCTAttachment(screenshot: app.screenshot())
-        screenshot.name = "Journey created offline"
-        screenshot.lifetime = .keepAlways
-        add(screenshot)
+        attachScreenshot("Journey created offline")
     }
 }
 
 final class AboutUITests: TrackerUITestCase {
 
-    /// The About sheet shows the app's version and build number (any version, so bumps need no test change).
+    /// The About sheet shows the app's version and build number (any version, so bumps need no test change)
+    /// and who is signed in.
     func testAboutShowsVersion() throws {
         let about = app.buttons["About"]
         XCTAssertTrue(about.waitForExistence(timeout: 10))
@@ -155,10 +160,10 @@ final class AboutUITests: TrackerUITestCase {
         // "Version, 1.1.0 (1)": the marketing version, then the build number.
         XCTAssertNotNil(version.label.wholeMatch(of: #/Version, \d+\.\d+\.\d+ \(\d+\)/#),
                         "Unexpected version row: \(version.label)")
-        let screenshot = XCTAttachment(screenshot: app.screenshot())
-        screenshot.name = "About"
-        screenshot.lifetime = .keepAlways
-        add(screenshot)
+        // UI tests start signed out.
+        XCTAssertEqual(app.staticTexts["aboutAccount"].label, "Signed in as, Nobody")
+        XCTAssertTrue(app.buttons["aboutSignIn"].exists)
+        attachScreenshot("About")
 
         app.buttons["Done"].tap()
         XCTAssertTrue(about.waitForExistence(timeout: 5))
@@ -183,15 +188,12 @@ final class PersistenceUITests: TrackerUITestCase {
         XCTAssertEqual(recordCount, 1)
         XCTAssertEqual(records.firstMatch.label, recorded)
         XCTAssertFalse(app.staticTexts["No location yet"].exists, "The header should show the latest record")
-        let screenshot = XCTAttachment(screenshot: app.screenshot())
-        screenshot.name = "After relaunch"
-        screenshot.lifetime = .keepAlways
-        add(screenshot)
+        attachScreenshot("After relaunch")
     }
 }
 
-/// Records offline, then relaunches against the mock /sync server (scripts/mock_sync_server.py,
-/// started by scripts/run-tests.sh) and checks everything is uploaded once.
+/// Records offline, then relaunches against the mock API (scripts/mock_sync_server.py, started by
+/// scripts/run-tests.sh), signs in and checks everything is uploaded once, as the signed-in user.
 final class SyncUITests: TrackerUITestCase {
     static let mockAPI = URL(string: "http://127.0.0.1:8765")!
 
@@ -211,10 +213,22 @@ final class SyncUITests: TrackerUITestCase {
                       "Got \(status.label)")
         XCTAssertEqual(mockState()["requests"] as? Int, 0)
 
-        // Relaunch with the server reachable: the app uploads on becoming active.
+        // Relaunch with the server reachable: nothing goes up until someone signs in.
         app.terminate()
         app.launchEnvironment["API_BASE_URL"] = Self.mockAPI.absoluteString
         app.launch()
+        let signIn = app.buttons["syncSignIn"]
+        XCTAssertTrue(signIn.waitForExistence(timeout: 10))
+        XCTAssertEqual(app.staticTexts["syncDetail"].label, "Sign in to upload")
+        XCTAssertEqual(mockState()["requests"] as? Int, 0)
+        attachScreenshot("Signed out")
+
+        signIn.tap()
+        enterCredentials(password: "wrong")
+        XCTAssertTrue(app.staticTexts["signInError"].waitForExistence(timeout: 10))
+        XCTAssertEqual(app.staticTexts["signInError"].label, "The username or password is wrong.")
+        attachScreenshot("Wrong password")
+        enterCredentials(password: "secret", username: nil)
 
         XCTAssertTrue(waitForLabel(of: app.staticTexts["syncStatus"], toBe: "All synced", timeout: 20),
                       "Got \(app.staticTexts["syncStatus"].label)")
@@ -222,10 +236,22 @@ final class SyncUITests: TrackerUITestCase {
         XCTAssertEqual((state["journeys"] as? [String])?.count, 1)
         XCTAssertEqual((state["waypoints"] as? [String])?.count, 1)
         XCTAssertEqual(state["requests"] as? Int, 1, "One upload, not one per trigger")
-        let screenshot = XCTAttachment(screenshot: app.screenshot())
-        screenshot.name = "All synced"
-        screenshot.lifetime = .keepAlways
-        add(screenshot)
+        XCTAssertEqual(state["unauthorized"] as? Int, 0, "Sent with the sign-in's token")
+        attachScreenshot("All synced")
+    }
+
+    /// Fills in the sign-in sheet and taps Sign In; `username` nil keeps the one already typed.
+    private func enterCredentials(password: String, username: String? = "tester") {
+        if let username {
+            let field = app.textFields["signInUsername"]
+            XCTAssertTrue(field.waitForExistence(timeout: 5))
+            field.tap()
+            field.typeText(username)
+        }
+        let secure = app.secureTextFields["signInPassword"]
+        secure.tap()
+        secure.typeText(password)
+        app.buttons["signInButton"].tap()
     }
 
     private func waitForLabel(of element: XCUIElement, toBe label: String, timeout: TimeInterval) -> Bool {
@@ -284,12 +310,5 @@ final class JourneysScreenUITests: TrackerUITestCase {
         XCTAssertEqual(waypoints.count, 1)
         XCTAssertTrue(waypoints.firstMatch.label.contains("Waiting to upload"), waypoints.firstMatch.label)
         attachScreenshot("Journey detail")
-    }
-
-    private func attachScreenshot(_ name: String) {
-        let screenshot = XCTAttachment(screenshot: app.screenshot())
-        screenshot.name = name
-        screenshot.lifetime = .keepAlways
-        add(screenshot)
     }
 }

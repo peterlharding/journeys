@@ -78,12 +78,15 @@ func waitUntil(_ condition: () -> Bool, file: StaticString = #filePath, line: UI
 final class FakeUploader: SyncUploading {
     struct Upload {
         let body: Data
+        let token: String?
         let notBefore: Date?
     }
 
     var onFinish: ((Result<(status: Int, body: Data), Error>) -> Void)?
     /// Answers an upload body; throwing fails the upload as if the network were down.
     var respond: (Data) throws -> (Int, Data) = { _ in (200, Data(#"{"journeys": {}, "waypoints": {}}"#.utf8)) }
+    /// Answers 401 instead when it returns false for the upload's token (it expired while waiting).
+    var acceptsToken: (String?) -> Bool = { _ in true }
 
     private(set) var queued: [Upload] = []
     private(set) var cancelCount = 0
@@ -94,8 +97,8 @@ final class FakeUploader: SyncUploading {
         return !queued.isEmpty
     }
 
-    func upload(_ body: Data, notBefore: Date?) {
-        queued.append(Upload(body: body, notBefore: notBefore))
+    func upload(_ body: Data, token: String?, notBefore: Date?) {
+        queued.append(Upload(body: body, token: token, notBefore: notBefore))
     }
 
     func cancelDelayedUploads() async {
@@ -119,6 +122,10 @@ final class FakeUploader: SyncUploading {
     func deliverNext() {
         guard !queued.isEmpty else { return }
         let upload = queued.removeFirst()
+        guard acceptsToken(upload.token) else {
+            onFinish?(.success((401, Data(#"{"detail": "Not authenticated"}"#.utf8))))
+            return
+        }
         do {
             let (status, body) = try respond(upload.body)
             onFinish?(.success((status, body)))
@@ -128,7 +135,42 @@ final class FakeUploader: SyncUploading {
     }
 }
 
-/// A stand-in for POST /sync with the real server's rules (mongo-api doc/SYNC.md): records are
+/// Signing in, as far as the sync engine sees it: signed in with token "token-1" unless a test
+/// says otherwise; each refresh (after a rejection) hands out the next number.
+@MainActor
+final class FakeAuth: AccessTokenProviding {
+    var isSignedIn: Bool {
+        didSet { onChange?() }
+    }
+    private(set) var cachedAccessToken: String?
+    var onChange: (() -> Void)?
+    private(set) var refreshes = 0
+    /// When set, refreshing fails as if the server ended the sign-in.
+    var signInEnded = false
+
+    init(signedIn: Bool = true) {
+        isSignedIn = signedIn
+        cachedAccessToken = signedIn ? "token-1" : nil
+    }
+
+    func accessToken() async throws -> String {
+        guard isSignedIn else { throw AuthError.signedOut }
+        if let cachedAccessToken { return cachedAccessToken }
+        if signInEnded {
+            isSignedIn = false
+            throw AuthError.signedOut
+        }
+        refreshes += 1
+        cachedAccessToken = "token-\(refreshes + 1)"
+        return cachedAccessToken!
+    }
+
+    func tokenRejected(_ token: String) {
+        if cachedAccessToken == token { cachedAccessToken = nil }
+    }
+}
+
+/// A stand-in for the sync endpoint with the real server's rules (fastapi-api): records are
 /// stored once by id, a waypoint needs its journey, and a journey named "Reject me" is refused.
 final class FakeSyncServer {
     private(set) var journeys: [String: [String: Any]] = [:]

@@ -18,13 +18,20 @@ final class AppServices {
     /// Wakes the app now and then to queue any records left waiting (a backstop for the background uploads).
     static let refreshTaskIdentifier = "com.performiq.Journeys.refresh"
 
+    let auth: AuthService
     let uploader: BackgroundUploader
     let syncEngine: SyncEngine
     let locationManager: LocationManager
 
     private init() {
+        auth = AuthService(api: .shared, credentials: Keychain())
+        // UI tests start signed out, whatever an earlier test left in the simulator's Keychain.
+        if ProcessInfo.processInfo.environment["RESET_SIGN_IN"] == "1" {
+            auth.forget()
+        }
         uploader = BackgroundUploader(baseURL: APIClient.shared.baseURL)
-        syncEngine = SyncEngine(store: .shared, api: .shared, uploader: uploader, network: NetworkMonitor())
+        syncEngine = SyncEngine(store: .shared, api: .shared, uploader: uploader, network: NetworkMonitor(),
+                                auth: auth)
         locationManager = LocationManager(store: .shared, syncEngine: syncEngine)
         uploader.onEventsFinished = { [syncEngine] completion in
             syncEngine.backgroundEventsFinished(completion)

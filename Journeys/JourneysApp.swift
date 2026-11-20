@@ -27,6 +27,7 @@ private struct RootView: View {
     @Environment(\.scenePhase) private var scenePhase
 
     @StateObject private var syncEngine = AppServices.shared.syncEngine
+    @StateObject private var auth = AppServices.shared.auth
     @StateObject private var locationManager = AppServices.shared.locationManager
 
     var body: some View {
@@ -34,6 +35,7 @@ private struct RootView: View {
             .environment(\.managedObjectContext, Store.shared.viewContext)
             .environmentObject(locationManager)
             .environmentObject(syncEngine)
+            .environmentObject(auth)
             .onChange(of: scenePhase) { _, phase in
                 switch phase {
                 case .active: syncEngine.appBecameActive()

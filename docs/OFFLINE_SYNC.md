@@ -170,4 +170,4 @@ Each phase ends with every test passing and is checked on the phone before the n
 
 * How mongo-api is deployed and restarted on the server, so phase 2 can be released and the outage seen today can be avoided.
 * Whether anything other than the `bin/` scripts reads the waypoint chain.
-* JWT login (`docs/BACKLOG.md`) will add a 401 path to the sync engine; it fits the design but is not part of these phases.
+* JWT login: done in 1.6.0, against fastapi-api; a 401 gets a fresh token and the batch is sent again.

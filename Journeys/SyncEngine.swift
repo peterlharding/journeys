@@ -2,7 +2,8 @@
 //  SyncEngine.swift
 //  Journeys
 //
-//  Uploads pending journeys and waypoints to POST /sync (docs/OFFLINE_SYNC.md, phases 3 and 4).
+//  Uploads pending journeys and waypoints to the API's sync endpoint (docs/OFFLINE_SYNC.md, phases 3
+//  and 4), as the signed-in user.
 //
 
 import CoreData
@@ -14,6 +15,8 @@ import Foundation
 /// batch is sent again and the server answers "duplicate". Automatic syncs are handed to a
 /// `SyncUploading` (iOS's background transfer service), which uploads on Wi-Fi only, even while the
 /// app is suspended; Sync now uploads in the foreground on any network.
+/// Uploads need a sign-in: each carries an access token from `AccessTokenProviding`, and a 401 (the
+/// token expired while the upload waited for Wi-Fi) gets a fresh token and the batch is sent again.
 /// Reading and writing records happens on a background context; the published status is for the UI.
 @MainActor
 final class SyncEngine: ObservableObject {
@@ -25,6 +28,8 @@ final class SyncEngine: ObservableObject {
         case waitingForWiFi
         /// The last attempt failed; it is retried automatically after a delay.
         case failed(String)
+        /// Records are waiting and nobody is signed in, or the server ended the sign-in.
+        case signedOut
     }
 
     @Published private(set) var status: Status = .idle
@@ -46,6 +51,7 @@ final class SyncEngine: ObservableObject {
     private let api: APIClient
     private let uploader: SyncUploading
     private let network: NetworkStatusProviding
+    private let auth: AccessTokenProviding
     private let defaults: UserDefaults
     private let debounce: Duration
 
@@ -56,21 +62,26 @@ final class SyncEngine: ObservableObject {
     /// hand over one batch, not one each.
     private var isQueueing = false
     private var consecutiveFailures = 0
+    /// Uploads refused with 401 since the last success; a second in a row is a real failure, not
+    /// just a token that expired while waiting.
+    private var unauthorizedInARow = 0
     private var debounceTask: Task<Void, Never>?
     /// Recording an upload's answer and queueing the next batch; awaited before iOS suspends the app.
     private var currentWork: Task<Void, Never>?
 
     init(store: Store, api: APIClient, uploader: SyncUploading, network: NetworkStatusProviding,
-         defaults: UserDefaults = .standard, debounce: Duration = .seconds(5)) {
+         auth: AccessTokenProviding, defaults: UserDefaults = .standard, debounce: Duration = .seconds(5)) {
         self.store = store
         self.api = api
         self.uploader = uploader
         self.network = network
+        self.auth = auth
         self.defaults = defaults
         self.debounce = debounce
         lastSyncedAt = defaults.object(forKey: Self.lastSyncedAtKey) as? Date
         network.onChange = { [weak self] in self?.networkChanged() }
         uploader.onFinish = { [weak self] result in self?.uploadFinished(result) }
+        auth.onChange = { [weak self] in self?.authChanged() }
         refreshCounts()
     }
 
@@ -106,6 +117,10 @@ final class SyncEngine: ObservableObject {
             if case .failed = status {} else { status = .idle }
             return
         }
+        guard auth.isSignedIn else {
+            status = .signedOut
+            return
+        }
         if await uploader.hasUploadInFlight() {
             if case .failed = status {} else { showUploadQueued() }
             return
@@ -118,6 +133,11 @@ final class SyncEngine: ObservableObject {
     /// Sync now: straight away in the foreground, on any network, regardless of earlier failures.
     func syncNow() async {
         guard !isSyncingNow else { return }
+        guard auth.isSignedIn else {
+            refreshCounts()
+            status = .signedOut
+            return
+        }
         isSyncingNow = true
         defer { isSyncingNow = false }
         // Anything queued for later would only be answered "duplicate"; this upload replaces it.
@@ -129,15 +149,29 @@ final class SyncEngine: ObservableObject {
             while true {
                 let batch = await makeBatch()
                 if batch.isEmpty { break }
-                let data = try await api.post("sync", body: batch, encoder: .sync, network: .any)
+                let data = try await post(batch)
                 let progressed = await apply(try JSONDecoder().decode(SyncResponse.self, from: data))
                 uploaded = uploaded || progressed
                 // A server that answers none of the records would otherwise be asked forever.
                 if !progressed { break }
             }
             succeeded(uploaded: uploaded)
+        } catch AuthError.signedOut {
+            showSignedOut()
         } catch {
             await failed(error)
+        }
+    }
+
+    /// Posts a batch in the foreground; after a 401, once more with a fresh token.
+    private func post(_ batch: SyncBatch) async throws -> Data {
+        let token = try await auth.accessToken()
+        do {
+            return try await api.post(APIClient.Path.sync, body: batch, encoder: .sync, bearer: token, network: .any)
+        } catch APIError.unexpectedStatus(APIError.unauthorized) {
+            auth.tokenRejected(token)
+            return try await api.post(APIClient.Path.sync, body: batch, encoder: .sync,
+                                      bearer: try await auth.accessToken(), network: .any)
         }
     }
 
@@ -149,6 +183,26 @@ final class SyncEngine: ObservableObject {
             await work?.value
             completion()
         }
+    }
+
+    /// Signed in: upload what is waiting. Signed out: stop, keeping the records for the next sign-in.
+    private func authChanged() {
+        Task {
+            if auth.isSignedIn {
+                consecutiveFailures = 0
+                unauthorizedInARow = 0
+                status = .idle
+                await syncAutomatically()
+            } else {
+                await uploader.cancelAll()
+                showSignedOut()
+            }
+        }
+    }
+
+    private func showSignedOut() {
+        refreshCounts()
+        status = pendingCount > 0 ? .signedOut : .idle
     }
 
     private func networkChanged() {
@@ -172,12 +226,23 @@ final class SyncEngine: ObservableObject {
         status = network.allowsAutomaticSync ? .syncing : .waitingForWiFi
     }
 
-    /// Queues the oldest pending records with the background uploader. Returns false if there were none.
+    /// Queues the oldest pending records with the background uploader. Returns false if there were
+    /// none, or nobody is signed in.
     @discardableResult
     private func queueNextBatch(notBefore: Date?) async -> Bool {
+        let token: String?
+        do {
+            token = try await auth.accessToken()
+        } catch AuthError.signedOut {
+            showSignedOut()
+            return false
+        } catch {
+            // No network for the refresh: queue with the old token, and the 401 brings us back here.
+            token = auth.cachedAccessToken
+        }
         let batch = await makeBatch()
         guard !batch.isEmpty, let body = try? JSONEncoder.sync.encode(batch) else { return false }
-        uploader.upload(body, notBefore: notBefore)
+        uploader.upload(body, token: token, notBefore: notBefore)
         return true
     }
 
@@ -196,6 +261,8 @@ final class SyncEngine: ObservableObject {
                 } catch {
                     await failed(error)
                 }
+            case .success((APIError.unauthorized, _)):
+                await unauthorized()
             case .success(let (code, _)):
                 await failed(APIError.unexpectedStatus(code))
             case .failure(let error as URLError) where error.code == .cancelled:
@@ -207,8 +274,25 @@ final class SyncEngine: ObservableObject {
         }
     }
 
+    /// The upload's token was refused, most likely because it expired while the upload waited for
+    /// Wi-Fi: send the batch again at once with a fresh one. Refused twice in a row, back off.
+    private func unauthorized() async {
+        unauthorizedInARow += 1
+        if let token = auth.cachedAccessToken {
+            auth.tokenRejected(token)
+        }
+        guard unauthorizedInARow == 1 else {
+            await failed(APIError.unexpectedStatus(APIError.unauthorized))
+            return
+        }
+        if await queueNextBatch(notBefore: nil) {
+            showUploadQueued()
+        }
+    }
+
     private func succeeded(uploaded: Bool) {
         consecutiveFailures = 0
+        unauthorizedInARow = 0
         // "Last synced" means the server confirmed records, not that there was nothing to send.
         if uploaded {
             lastSyncedAt = .now

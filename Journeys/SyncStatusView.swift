@@ -2,13 +2,15 @@
 //  SyncStatusView.swift
 //  Journeys
 //
-//  One line saying what is waiting to upload and why, with a Sync now button.
+//  One line saying what is waiting to upload and why, with a Sync now (or Sign in) button.
 //
 
 import SwiftUI
 
 struct SyncStatusView: View {
     @ObservedObject var syncEngine: SyncEngine
+    /// Shows the sign-in sheet.
+    var signIn: () -> Void = {}
 
     var body: some View {
         HStack(spacing: 12) {
@@ -29,6 +31,10 @@ struct SyncStatusView: View {
             Spacer(minLength: 0)
             if syncEngine.status == .syncing {
                 ProgressView()
+            } else if syncEngine.status == .signedOut {
+                Button("Sign In", action: signIn)
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("syncSignIn")
             } else if syncEngine.pendingCount > 0 {
                 Button("Sync now") {
                     Task { await syncEngine.syncNow() }
@@ -65,6 +71,8 @@ struct SyncStatusView: View {
             parts.append("Waiting for Wi-Fi")
         case .failed(let message):
             parts.append("Upload failed, will retry: \(message)")
+        case .signedOut:
+            parts.append("Sign in to upload")
         case .idle:
             if let lastSyncedAt = syncEngine.lastSyncedAt {
                 parts.append("Last synced \(lastSyncedAt.formatted(date: .omitted, time: .shortened))")
@@ -81,6 +89,7 @@ struct SyncStatusView: View {
         case .syncing: "arrow.triangle.2.circlepath.icloud"
         case .failed: "exclamationmark.icloud"
         case .waitingForWiFi: "wifi.exclamationmark"
+        case .signedOut: "person.crop.circle.badge.exclamationmark"
         case .idle: syncEngine.pendingCount == 0 ? "checkmark.icloud" : "icloud.and.arrow.up"
         }
     }
@@ -88,7 +97,7 @@ struct SyncStatusView: View {
     private var tint: Color {
         switch syncEngine.status {
         case .failed: .red
-        case .waitingForWiFi: .orange
+        case .waitingForWiFi, .signedOut: .orange
         default: syncEngine.pendingCount == 0 ? .green : .accentColor
         }
     }

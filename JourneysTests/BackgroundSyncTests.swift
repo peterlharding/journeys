@@ -15,6 +15,7 @@ final class BackgroundSyncTests: XCTestCase {
     private var store: Store!
     private var server: FakeSyncServer!
     private var uploader: FakeUploader!
+    private var auth: FakeAuth!
     private let start = Date(timeIntervalSince1970: 1_800_000_000)
 
     override func setUp() {
@@ -24,13 +25,14 @@ final class BackgroundSyncTests: XCTestCase {
         let server = server!
         StubURLProtocol.responder = { body in try server.respond(to: body) }
         uploader = FakeUploader()
+        auth = FakeAuth()
         uploader.respond = { body in try server.respond(to: body) }
     }
 
     private func makeEngine(wifi: Bool = true, network: FakeNetwork? = nil,
                             defaults: UserDefaults? = nil) -> SyncEngine {
         SyncEngine(store: store, api: makeStubAPI(), uploader: uploader, network: network ?? FakeNetwork(wifi: wifi),
-                   defaults: defaults ?? makeTestDefaults(), debounce: .zero)
+                   auth: auth, defaults: defaults ?? makeTestDefaults(), debounce: .zero)
     }
 
     @discardableResult

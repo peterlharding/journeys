@@ -13,6 +13,7 @@ final class SyncEngineTests: XCTestCase {
     private var store: Store!
     private var server: FakeSyncServer!
     private var uploader: FakeUploader!
+    private var auth: FakeAuth!
     private let start = Date(timeIntervalSince1970: 1_800_000_000)
 
     override func setUp() {
@@ -22,13 +23,14 @@ final class SyncEngineTests: XCTestCase {
         let server = server!
         StubURLProtocol.responder = { body in try server.respond(to: body) }
         uploader = FakeUploader()
+        auth = FakeAuth()
         uploader.respond = { body in try server.respond(to: body) }
     }
 
     private func makeEngine(wifi: Bool = true, network: FakeNetwork? = nil,
                             defaults: UserDefaults? = nil) -> SyncEngine {
         SyncEngine(store: store, api: makeStubAPI(), uploader: uploader, network: network ?? FakeNetwork(wifi: wifi),
-                   defaults: defaults ?? makeTestDefaults(), debounce: .zero)
+                   auth: auth, defaults: defaults ?? makeTestDefaults(), debounce: .zero)
     }
 
     @discardableResult
@@ -64,7 +66,8 @@ final class SyncEngineTests: XCTestCase {
                        ["2027-01-15T08:00:00.000Z", "2027-01-15T08:01:00.000Z"])
         XCTAssertEqual(sentWaypoints.first?["journeyId"] as? String, journey.id.uuidString)
         XCTAssertEqual(sentWaypoints.first?["source"] as? String, "tracker")
-        XCTAssertEqual(StubURLProtocol.lastRequest?.url?.path(), "/sync")
+        XCTAssertEqual(StubURLProtocol.lastRequest?.url?.path(), "/api/v1/journeys/sync")
+        XCTAssertEqual(StubURLProtocol.lastRequest?.value(forHTTPHeaderField: "Authorization"), "Bearer token-1")
 
         XCTAssertEqual(journey.syncState, .synced)
         XCTAssertEqual(states(journey), [.synced, .synced])

@@ -37,7 +37,7 @@ run_tests() {
 
 status=0
 
-# The mock /sync server for SyncUITests; stopped when the script exits.
+# The mock API (sync and sign-in) for SyncUITests; stopped when the script exits.
 python3 scripts/mock_sync_server.py 8765 2>/dev/null &
 MOCK_PID=$!
 trap 'kill $MOCK_PID 2>/dev/null' EXIT

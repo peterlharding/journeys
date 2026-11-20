@@ -30,9 +30,11 @@ struct CheckboxToggleStyle: ToggleStyle {
 struct ContentView: View {
     @EnvironmentObject private var locationManager: LocationManager
     @EnvironmentObject private var syncEngine: SyncEngine
+    @EnvironmentObject private var auth: AuthService
 
     @State private var isModalPresented: Bool = false
     @State private var isAboutPresented = false
+    @State private var isSignInPresented = false
     @State private var isJourneysPresented = false
     @State private var showLocations: Bool = true // State variable to control showing the list
 
@@ -116,7 +118,7 @@ struct ContentView: View {
                     .padding()
                 }
 
-                SyncStatusView(syncEngine: syncEngine)
+                SyncStatusView(syncEngine: syncEngine) { isSignInPresented = true }
 
                 Toggle(isOn: $showLocations) {
                     Text("Show Locations")
@@ -134,7 +136,10 @@ struct ContentView: View {
             NewJourneyModal(locationManager: locationManager)
         }
         .sheet(isPresented: $isAboutPresented) {
-            AboutView()
+            AboutView(auth: auth)
+        }
+        .sheet(isPresented: $isSignInPresented) {
+            SignInView(auth: auth)
         }
         .sheet(isPresented: $isJourneysPresented) {
             JourneysView(currentJourneyID: locationManager.currentJourney?.id)
@@ -229,11 +234,23 @@ struct RecordedLocationsView: View {
 
 #Preview {
     let store = Store.inMemory()
+    let auth = AuthService(api: .shared, credentials: PreviewCredentials())
     ContentView()
         .environment(\.managedObjectContext, store.viewContext)
         .environmentObject(LocationManager(store: store))
+        .environmentObject(auth)
         .environmentObject(SyncEngine(store: store, api: .shared, uploader: PreviewUploader(),
-                                      network: NetworkMonitor()))
+                                      network: NetworkMonitor(), auth: auth))
+}
+
+/// Previews never touch the Keychain.
+final class PreviewCredentials: CredentialStoring {
+    private var values: [String: Data] = [:]
+    func data(for key: String) -> Data? { values[key] }
+    func set(_ data: Data?, for key: String) -> Bool {
+        values[key] = data
+        return true
+    }
 }
 
 /// Previews never hand anything to iOS's background transfer service.
@@ -241,7 +258,7 @@ struct RecordedLocationsView: View {
 private final class PreviewUploader: SyncUploading {
     var onFinish: ((Result<(status: Int, body: Data), Error>) -> Void)?
     func hasUploadInFlight() async -> Bool { false }
-    func upload(_ body: Data, notBefore: Date?) {}
+    func upload(_ body: Data, token: String?, notBefore: Date?) {}
     func cancelDelayedUploads() async {}
     func cancelAll() async {}
 }

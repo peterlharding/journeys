@@ -16,12 +16,15 @@ final class StubURLProtocol: URLProtocol {
     /// Returns the status and body for a request body; `nil` answers with `status` and `{}`.
     /// Throwing fails the request as if the network were down.
     nonisolated(unsafe) static var responder: ((Data) throws -> (Int, Data))?
+    /// Added to every response's headers.
+    nonisolated(unsafe) static var headers: [String: String] = [:]
 
     static func reset() {
         status = 200
         lastRequest = nil
         requests = []
         responder = nil
+        headers = [:]
     }
 
     override static func canInit(with request: URLRequest) -> Bool { true }
@@ -42,7 +45,7 @@ final class StubURLProtocol: URLProtocol {
                 return
             }
         }
-        var headers = ["Content-Type": "application/json"]
+        var headers = Self.headers.merging(["Content-Type": "application/json"]) { _, new in new }
         if status == 302 { headers["Location"] = "https://example.com/error" }
         let response = HTTPURLResponse(url: request.url!, statusCode: status,
                                        httpVersion: "HTTP/1.1", headerFields: headers)!

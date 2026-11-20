@@ -15,8 +15,9 @@ protocol SyncUploading: AnyObject {
     var onFinish: ((Result<(status: Int, body: Data), Error>) -> Void)? { get set }
     /// Whether an upload is queued or running, including one handed over before a relaunch.
     func hasUploadInFlight() async -> Bool
-    /// Queues `body` for `POST /sync`, not before `notBefore`.
-    func upload(_ body: Data, notBefore: Date?)
+    /// Queues `body` for the sync endpoint with `token` as its access token, not before `notBefore`.
+    /// The token may have expired by the time iOS sends it; the server then answers 401.
+    func upload(_ body: Data, token: String?, notBefore: Date?)
     /// Cancels uploads still waiting out a start delay, or aimed at another server, so a fresh one
     /// can go at once (the app was opened).
     func cancelDelayedUploads() async
@@ -68,7 +69,7 @@ final class BackgroundUploader: NSObject, SyncUploading, URLSessionDataDelegate,
     }()
 
     init(baseURL: URL) {
-        endpoint = baseURL.appending(path: "sync")
+        endpoint = baseURL.appending(path: APIClient.Path.sync)
         directory = FileManager.default.temporaryDirectory.appending(path: "SyncUploads")
         super.init()
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -92,7 +93,7 @@ final class BackgroundUploader: NSObject, SyncUploading, URLSessionDataDelegate,
     }
 
     @MainActor
-    func upload(_ body: Data, notBefore: Date?) {
+    func upload(_ body: Data, token: String?, notBefore: Date?) {
         // Background sessions only upload from a file.
         let file = directory.appending(path: "\(UUID().uuidString).json")
         do {
@@ -104,6 +105,9 @@ final class BackgroundUploader: NSObject, SyncUploading, URLSessionDataDelegate,
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if let token {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
         let task = session.uploadTask(with: request, fromFile: file)
         task.taskDescription = file.path
         task.earliestBeginDate = notBefore
