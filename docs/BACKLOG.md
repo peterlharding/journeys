@@ -1,13 +1,20 @@
 # Backlog
 
-## Backend: move off mongo-api
+## Retire mongo-api
 
-The app signs in to fastapi-api (`https://fast-api.performiq.com`) and uploads there from 1.6.0, with rotating refresh tokens (90 days, reuse detection) and 15-minute access tokens.
-The data already in MongoDB moves with fastapi-api's `scripts/mongo-export-journeys.sh` and `scripts/import_mongo_journeys.py`.
+The move off MongoDB is complete (2026-11-20).
+The app signs in to fastapi-api (`https://fast-api.performiq.com`, 0.3.1 on vega) and uploads there from 1.6.0, with rotating refresh tokens (90 days, reuse detection) and 15-minute access tokens.
+MongoDB's 36 journeys and 3093 waypoints are in Postgres under `plh`, imported with fastapi-api's `scripts/mongo-export-journeys.sh` and `scripts/import_mongo_journeys.py`; a second export after installing 1.6.0 found nothing new.
+40 waypoints whose journey is not in MongoDB were left out, and stay in the export on vega (`/root/mongo-export`).
+Mongo's times are UTC, including those from before `POST /sync` (checked against the trips' known local times), and were imported as they are.
 
-* Mongo's times are UTC, including those from before `POST /sync` (checked 2026-11-20 against the trips' known local times, e.g. a Bunnings trip at 23:14 UTC, 10:14 am local); the import keeps them as they are.
-* The phone uploads only to fastapi-api from 1.6.0, so export and import once more after installing it, to catch anything synced to mongo-api after the first export.
-* Security issues found in `fastapi/mongo-api` (mongo-api.performiq.com), to fix or retire with it: `GET /api-credentials` returns all `ApplicationUser` records unauthenticated (`app/routes/test.py:37`); journeys/waypoints endpoints have no auth; `/v3/authenticate` reportedly never checks the Basic password and logs passwords; the MongoDB password is committed in `app/CONFIG.py` (private repo).
+mongo-api (mongo-api.performiq.com) now has no part in Journeys and can be switched off.
+Until it is, it still has these security issues:
+
+* `GET /api-credentials` returns all `ApplicationUser` records unauthenticated (`app/routes/test.py:37`).
+* The journeys and waypoints endpoints have no auth.
+* `/v3/authenticate` reportedly never checks the Basic password, and logs passwords.
+* The MongoDB password is committed in `app/CONFIG.py` (private repo).
 
 ## Multiple location records (cause found 2026-11-20)
 
